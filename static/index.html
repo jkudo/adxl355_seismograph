@@ -932,14 +932,9 @@ function closeEventModal(){
 }
 async function loadEventList(){
   try{
-    let url='/events?limit=100';
+    let url='/events?limit=20';
     if(customRange){
       url=`/events?start=${customRange.start}&end=${customRange.end}&limit=500`;
-    }else{
-      const winMs=winSec(win)*1000;
-      const end=Date.now();
-      const start=end-winMs;
-      url=`/events?start=${start}&end=${end}&limit=500`;
     }
     const res=await fetch(url);
     const arr=await res.json();
@@ -950,7 +945,7 @@ async function loadEventList(){
         const f=t=>new Date(t).toLocaleString('ja-JP',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
         lblEl.textContent=`範囲: ${f(customRange.start)} 〜 ${f(customRange.end)} (${arr.length}件)`;
       }else{
-        lblEl.textContent=`期間: ${winLabel(win)} (${arr.length}件)`;
+        lblEl.textContent=`最新 ${arr.length} 件`;
       }
     }
     const el=document.getElementById('event-list');

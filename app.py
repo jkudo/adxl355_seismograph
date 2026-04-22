@@ -448,12 +448,12 @@ def producer_loop():
     _filt_y = collections.deque([0.0] * FILTER_LEN, maxlen=FILTER_LEN)
     _filt_z = collections.deque([0.0] * FILTER_LEN, maxlen=FILTER_LEN)
 
-    # STA/LTA 地震検知（長周期地震も拾えるよう感度を上げる）
-    STA_LEN     = 625    # 5秒 @ 125Hz (125*5)  ※長周期波(周期2〜10秒)を捉えるため拡大
-    LTA_LEN     = 7500   # 60秒 @ 125Hz (125*60)
-    STALTA_ON   = 2.5    # トリガー閾値（震度2相当でも拾えるよう緩和）
-    STALTA_OFF  = 1.3    # デトリガー閾値
-    QUAKE_MIN_DUR = 3.0  # 地震確定の最小継続秒数
+    # STA/LTA 地震検知
+    STA_LEN     = 625    # 5秒 @ 125Hz
+    LTA_LEN     = 7500   # 60秒 @ 125Hz
+    STALTA_ON   = 4.0    # トリガー閾値（誤検知低減のため厳しめ）
+    STALTA_OFF  = 1.8    # デトリガー閾値
+    QUAKE_MIN_DUR = 5.0  # 地震確定の最小継続秒数
     sta_buf = collections.deque(maxlen=STA_LEN)
     lta_buf = collections.deque(maxlen=LTA_LEN)
     sta_sum = lta_sum = 0.0
