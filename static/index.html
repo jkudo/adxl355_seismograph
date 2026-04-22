@@ -485,7 +485,14 @@ function updateShindo(gal,tMs,serverShindo,serverAIva,h,v){
     ? (SHINDO.find(s=>s.level===serverShindo) || galToShindo(showGal))
     : galToShindo(showGal);
 
-  const mx=Math.max(...recentC.map(p=>p.gal),0);
+  // 表示期間内に発生した記録イベントの max_gal も最大算出に含める
+  // （チャートは10Hzにbinningされ生125Hzのピークが丸まるため、サイドバー履歴と食い違うのを防ぐ）
+  let mx=Math.max(...recentC.map(p=>p.gal),0);
+  if(Array.isArray(_eventCache)){
+    for(const ev of _eventCache){
+      if(ev && ev.start && (now-ev.start)<keepMs && ev.max_gal>mx) mx=ev.max_gal;
+    }
+  }
   const max60=galToShindo(mx);
   const e1=document.getElementById('shindo-now');
   e1.textContent='震度'+cur.level;e1.style.color=cur.color;e1.style.borderColor=cur.color;
@@ -559,6 +566,7 @@ async function loadHistory(w){
   setXUnit(unitMap[w]||'second');
   setXWin(now,span);
   Object.values(charts).forEach(c=>c.update('none'));
+  if(typeof autoScaleYFromEvents==='function') autoScaleYFromEvents();
 }
 
 /* ── 折りたたみ ── */
@@ -941,7 +949,30 @@ async function loadEventList(){
       </div>`;
     });
     el.innerHTML=rows.join('');
+    autoScaleYFromEvents();
   }catch(e){}
+}
+
+// 表示期間内の記録イベントの最大galに合わせてメインチャートのY軸を拡大させる
+function autoScaleYFromEvents(){
+  if(!Array.isArray(_eventCache)||!_eventCache.length) return;
+  const now=Date.now();
+  const winMs=winSec(win)*1000;
+  let mx=0;
+  for(const ev of _eventCache){
+    if(ev && ev.start && (now-ev.start)<winMs && ev.max_gal>mx) mx=ev.max_gal;
+  }
+  if(mx<=0) return;
+  const steps=[25,100,200,400,800,1600];
+  const r=steps.find(s=>s>=mx*1.2)||Math.ceil(mx*1.2/100)*100;
+  const curMax=charts.c.options.scales.y.max||25;
+  if(r>curMax){
+    setYRange(r);
+    document.querySelectorAll('button[data-range]').forEach(b2=>{
+      b2.classList.toggle('active', Number(b2.dataset.range)===r);
+    });
+    Object.values(charts).forEach(c=>c.update('none'));
+  }
 }
 
 document.querySelectorAll('.iv-btn').forEach(btn=>{
