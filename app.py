@@ -666,11 +666,12 @@ def producer_loop():
             s_h_absmax=s_v_absmax=0.0
         s_cnt+=1
         s_sum_x+=ax; s_sum_y+=ay; s_sum_z+=az
-        if abs(ax)>abs(s_peak_x): s_peak_x=ax
-        if abs(ay)>abs(s_peak_y): s_peak_y=ay
-        if abs(az)>abs(s_peak_z): s_peak_z=az
-        s_h_absmax=max(s_h_absmax,h)
-        s_v_absmax=max(s_v_absmax,v)
+        if abs(raw_ax)>abs(s_peak_x): s_peak_x=raw_ax
+        if abs(raw_ay)>abs(s_peak_y): s_peak_y=raw_ay
+        if abs(raw_az)>abs(s_peak_z): s_peak_z=raw_az
+        # h/v ピークは raw（LP前）瞬時値で取り、震度判定と一致させる
+        s_h_absmax=max(s_h_absmax,h_raw_inst)
+        s_v_absmax=max(s_v_absmax,v_raw_inst)
 
         # ---- 1分ごとにDB保存 ----
         now_m = now_s // 60
@@ -689,10 +690,10 @@ def producer_loop():
             m_peak_x=m_peak_y=m_peak_z=0.0; m_h_absmax=m_v_absmax=0.0
         m_cnt+=1
         m_sum_x+=ax; m_sum_y+=ay; m_sum_z+=az
-        if abs(ax)>abs(m_peak_x): m_peak_x=ax
-        if abs(ay)>abs(m_peak_y): m_peak_y=ay
-        if abs(az)>abs(m_peak_z): m_peak_z=az
-        m_h_absmax=max(m_h_absmax,h); m_v_absmax=max(m_v_absmax,v)
+        if abs(raw_ax)>abs(m_peak_x): m_peak_x=raw_ax
+        if abs(raw_ay)>abs(m_peak_y): m_peak_y=raw_ay
+        if abs(raw_az)>abs(m_peak_z): m_peak_z=raw_az
+        m_h_absmax=max(m_h_absmax,h_raw_inst); m_v_absmax=max(m_v_absmax,v_raw_inst)
 
         
 
