@@ -877,6 +877,19 @@ function openEventModal(idx){
       ※ 単一センサーでの推定です。震源・規模・発生メカニズム（プレート境界型／直下型など）の確定には複数観測点の解析が必要です。
     </div>`;
   document.getElementById('event-modal').classList.add('active');
+  // 過去地震を表示中はその最大galに合わせてY軸を拡大（震度4以上 or 25galを超える場合）
+  if(e.max_gal){
+    const steps=[25,100,200,400,800,1600];
+    const r=steps.find(s=>s>=e.max_gal*1.2)||Math.ceil(e.max_gal*1.2/100)*100;
+    const curMax=charts.c.options.scales.y.max||25;
+    if(r>curMax){
+      setYRange(r);
+      document.querySelectorAll('button[data-range]').forEach(b2=>{
+        b2.classList.toggle('active', Number(b2.dataset.range)===r);
+      });
+      Object.values(charts).forEach(c=>c.update('none'));
+    }
+  }
 }
 function closeEventModal(){
   document.getElementById('event-modal').classList.remove('active');
