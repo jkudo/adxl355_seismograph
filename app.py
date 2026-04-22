@@ -786,8 +786,27 @@ def history():
 
 @app.route("/events")
 def get_events():
+    start_ms = request.args.get("start")
+    end_ms = request.args.get("end")
+    try:
+        limit = int(request.args.get("limit", "20"))
+    except:
+        limit = 20
+    limit = max(1, min(limit, 500))
     conn=sqlite3.connect(DB_PATH); c=conn.cursor()
-    c.execute("SELECT id,start_ts,end_ts,max_gal,shindo,duration_sec,max_h,max_v FROM events ORDER BY start_ts DESC LIMIT 20")
+    if start_ms and end_ms:
+        try:
+            st = int(start_ms) // 1000
+            ed = int(end_ms) // 1000
+            c.execute("SELECT id,start_ts,end_ts,max_gal,shindo,duration_sec,max_h,max_v "
+                      "FROM events WHERE start_ts>=? AND start_ts<=? "
+                      "ORDER BY start_ts DESC LIMIT ?", (st, ed, limit))
+        except Exception:
+            conn.close()
+            return jsonify({"error":"bad start/end"}),400
+    else:
+        c.execute("SELECT id,start_ts,end_ts,max_gal,shindo,duration_sec,max_h,max_v "
+                  "FROM events ORDER BY start_ts DESC LIMIT ?", (limit,))
     rows=c.fetchall(); conn.close()
     return jsonify([{"id":r[0],"start":r[1]*1000,"end":r[2]*1000,
                      "max_gal":r[3],"shindo":r[4],"duration":r[5],

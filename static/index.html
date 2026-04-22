@@ -352,7 +352,7 @@
    </div><!-- /main-col -->
 
    <aside id="sidebar">
-    <h2>📋 過去の地震履歴</h2>
+    <h2>📋 過去の地震履歴 <span id="event-list-range" style="font-size:11px;color:var(--muted);font-weight:400;display:block;margin-top:2px"></span></h2>
     <div id="event-list"><div class="empty">記録なし</div></div>
    </aside>
   </div><!-- /layout -->
@@ -597,6 +597,7 @@ async function onCustomZoom(xMin, xMax){
              hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
   lbl.textContent = `範囲: ${fmt(xMin)} 〜 ${fmt(xMax)}`;
   await loadHistoryRange(customRange.start, customRange.end);
+  await loadEventList();
 }
 
 function resetCustomRange(){
@@ -604,6 +605,7 @@ function resetCustomRange(){
   document.getElementById('resetZoomBtn').style.display='none';
   document.getElementById('customRangeLabel').style.display='none';
   loadHistory(win);
+  loadEventList();
 }
 
 async function loadHistoryRange(startMs, endMs){
@@ -754,6 +756,7 @@ document.getElementById('windowSelect').addEventListener('change',async e=>{
     document.getElementById('customRangeLabel').style.display='none';
   }
   win=e.target.value;maxPts=maxPointsFor(win);await loadHistory(win);
+  await loadEventList();
 });
 document.querySelectorAll('button[data-range]').forEach(btn=>{
   btn.addEventListener('click',()=>{
@@ -929,9 +932,27 @@ function closeEventModal(){
 }
 async function loadEventList(){
   try{
-    const res=await fetch('/events');
+    let url='/events?limit=100';
+    if(customRange){
+      url=`/events?start=${customRange.start}&end=${customRange.end}&limit=500`;
+    }else{
+      const winMs=winSec(win)*1000;
+      const end=Date.now();
+      const start=end-winMs;
+      url=`/events?start=${start}&end=${end}&limit=500`;
+    }
+    const res=await fetch(url);
     const arr=await res.json();
     _eventCache=arr;
+    const lblEl=document.getElementById('event-list-range');
+    if(lblEl){
+      if(customRange){
+        const f=t=>new Date(t).toLocaleString('ja-JP',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
+        lblEl.textContent=`範囲: ${f(customRange.start)} 〜 ${f(customRange.end)} (${arr.length}件)`;
+      }else{
+        lblEl.textContent=`期間: ${winLabel(win)} (${arr.length}件)`;
+      }
+    }
     const el=document.getElementById('event-list');
     if(!arr.length){el.innerHTML='<div class="empty">記録なし</div>';return;}
     const rows=arr.slice(0,10).map((e,i)=>{
