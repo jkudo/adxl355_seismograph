@@ -942,9 +942,17 @@ function closeEventModal(){
 }
 async function loadEventList(){
   try{
-    let url='/events?limit=20';
+    let url, rangeStart, rangeEnd, isWindowed=false;
     if(customRange){
-      url=`/events?start=${customRange.start}&end=${customRange.end}&limit=500`;
+      rangeStart=customRange.start; rangeEnd=customRange.end;
+      url=`/events?start=${rangeStart}&end=${rangeEnd}&limit=500`;
+      isWindowed=true;
+    }else{
+      // 表示中ウィンドウに合わせて期間絞り込み
+      rangeEnd=Date.now();
+      rangeStart=rangeEnd - winSec(win)*1000;
+      url=`/events?start=${rangeStart}&end=${rangeEnd}&limit=500`;
+      isWindowed=true;
     }
     const res=await fetch(url);
     const arr=await res.json();
@@ -955,12 +963,12 @@ async function loadEventList(){
         const f=t=>new Date(t).toLocaleString('ja-JP',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
         lblEl.textContent=`範囲: ${f(customRange.start)} 〜 ${f(customRange.end)} (${arr.length}件)`;
       }else{
-        lblEl.textContent=`最新 ${arr.length} 件`;
+        lblEl.textContent=`直近 ${winLabel(win)} (${arr.length}件)`;
       }
     }
     const el=document.getElementById('event-list');
     if(!arr.length){el.innerHTML='<div class="empty">記録なし</div>';return;}
-    const rows=arr.slice(0,10).map((e,i)=>{
+    const rows=arr.map((e,i)=>{
       const dt=new Date(e.start);
       const ts=dt.toLocaleString('ja-JP',{month:'2-digit',day:'2-digit',
                 hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
