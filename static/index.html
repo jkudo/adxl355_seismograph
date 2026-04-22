@@ -725,6 +725,7 @@ function attachLive(){
       const d=JSON.parse(ev.data);
       if(d.type==='quake_start'){showBannerStart(d);}
       else if(d.type==='quake_end'){showBannerEnd(d);}
+      else if(d.type==='quake_cancel'){closeBanner();}
       else if(d.type==='recal_start'){setRecalStatus('実行中...','#22d3ee');}
       else if(d.type==='recal_done'){setRecalStatus('完了','#22c55e');setTimeout(()=>setRecalStatus('',''),3000);document.getElementById('recalBtn').disabled=false;}
       else if(d.type==='recal_error'){setRecalStatus('失敗: '+(d.err||''),'#ef4444');document.getElementById('recalBtn').disabled=false;}

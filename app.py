@@ -459,6 +459,7 @@ def producer_loop():
     sta_sum = lta_sum = 0.0
     quake_on = False; quake_start_t = 0.0; quake_max_gal = 0.0
     quake_max_h = 0.0; quake_max_v = 0.0
+    quake_c_hist = []  # 地震中の c_raw 全サンプル（Iva計算用）
 
     # 自動再キャリブレーション: 300秒EMAで持続的オフセットを検出
     # EMA時定数を長くすることで長い地震（1〜2分）との誤判定を防ぐ
@@ -581,29 +582,41 @@ def producer_loop():
             if not quake_on and ratio >= STALTA_ON:
                 quake_on = True; quake_start_t = now; quake_max_gal = c_raw
                 quake_max_h = h_raw; quake_max_v = v_raw
+                quake_c_hist = [c_raw]
                 print(f"[地震検知] STA/LTA={ratio:.2f}")
                 ui_broadcast(json.dumps({"type":"quake_start","t":now,"ratio":round(ratio,2)}))
             elif quake_on:
                 if c_raw > quake_max_gal: quake_max_gal = c_raw
                 if h_raw > quake_max_h: quake_max_h = h_raw
                 if v_raw > quake_max_v: quake_max_v = v_raw
+                quake_c_hist.append(c_raw)
                 if ratio < STALTA_OFF:
                     dur = now - quake_start_t
                     if dur >= QUAKE_MIN_DUR:
-                        sh = _shindo_str(quake_max_gal)
+                        # JMA計測震度 Iva簡易版: 地震中の c_raw をソートし、
+                        # 上から 0.3秒分サンプル目の値（= 0.3秒以上継続した最大加速度）
+                        sorted_c = sorted(quake_c_hist, reverse=True)
+                        idx = min(IVA_MIN_SAMPLES - 1, len(sorted_c) - 1)
+                        a_iva_q = sorted_c[idx] if sorted_c else 0.0
+                        iva_q = (2.0 * math.log10(a_iva_q) + 0.94) if a_iva_q > 0.0 else -1.0
+                        sh = _iva_to_shindo(iva_q)
                         _save_event(cur, conn, int(quake_start_t), int(now), quake_max_gal, sh, dur,
                                     max_h=quake_max_h, max_v=quake_max_v)
-                        print(f"[地震終了] 最大{quake_max_gal:.1f}gal H{quake_max_h:.1f} V{quake_max_v:.1f} 推定震度{sh} 継続{dur:.1f}秒")
+                        print(f"[地震終了] 最大{quake_max_gal:.1f}gal H{quake_max_h:.1f} V{quake_max_v:.1f} a_iva={a_iva_q:.2f} Iva={iva_q:.2f} 推定震度{sh} 継続{dur:.1f}秒")
                         ui_broadcast(json.dumps({"type":"quake_end","t":now,
                             "max_gal":round(quake_max_gal,1),"shindo":sh,"duration":round(dur,1),
-                            "max_h":round(quake_max_h,1),"max_v":round(quake_max_v,1)}))
+                            "max_h":round(quake_max_h,1),"max_v":round(quake_max_v,1),
+                            "iva":round(iva_q,2)}))
                         if _shindo_to_level(sh) >= TWEET_MIN_LEVEL:
                             _post_tweet_async(sh, quake_max_gal, quake_max_h, quake_max_v,
                                               dur, quake_start_t)
                     else:
                         print(f"[誤検知破棄] {dur:.1f}秒（最小{QUAKE_MIN_DUR}秒未満）")
+                        ui_broadcast(json.dumps({"type":"quake_cancel","t":now,
+                            "duration":round(dur,1)}))
                     quake_on=False; quake_start_t=0.0; quake_max_gal=0.0
                     quake_max_h=0.0; quake_max_v=0.0
+                    quake_c_hist = []
 
         # ---- 10Hzピーク更新 ----
         pbin = int(now*10)
