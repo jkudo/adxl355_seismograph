@@ -487,22 +487,28 @@ function updateShindo(gal,tMs,serverShindo,serverAIva,h,v){
     ? (SHINDO.find(s=>s.level===serverShindo) || galToShindo(showGal))
     : galToShindo(showGal);
 
-  // 最大震度: 期間内の a_iva のピークから算出（ノイズフロアの瞬間 gal ピークを除外）
-  // 過去データ（履歴流し込み）は a_iva が無いため gal を使うが、その場合も noise 切捨て
-  // のため 0.6gal 未満は 0 扱い。
+  // 最大震度: 表示期間内の確定地震イベント（events テーブル）の最大震度を表示する。
+  // 5秒未満の微振動や静止時ノイズは event 化されないため、サイドバー履歴と完全一致する。
+  // 期間内に地震記録が無い場合は震度0表示。
   let mxIva = 0;
-  for(const p of recentC){
-    if(p.aIva!=null && p.aIva>mxIva) mxIva = p.aIva;
-    else if(p.aIva==null && p.gal>=0.6 && p.gal>mxIva) mxIva = p.gal;
-  }
-  // 表示期間内に発生した記録イベントの max_gal は本物の地震なので含める
+  let maxShindoLevel = '0';
+  let maxShindoColor = SHINDO[SHINDO.length-1].color;
   if(Array.isArray(_eventCache)){
     for(const ev of _eventCache){
-      if(ev && ev.start && (now-ev.start)<keepMs && ev.max_gal>mxIva) mxIva=ev.max_gal;
+      if(!ev || !ev.start) continue;
+      if((now-ev.start)>=keepMs) continue;
+      if(ev.max_gal>mxIva) mxIva=ev.max_gal;
+      // 震度文字列を直接比較（5強>5弱>4>... の順）
+      const cur = SHINDO.findIndex(s=>s.level===maxShindoLevel);
+      const ne  = SHINDO.findIndex(s=>s.level===ev.shindo);
+      if(ne>=0 && (cur<0 || ne<cur)){
+        maxShindoLevel = ev.shindo;
+        maxShindoColor = SHINDO[ne].color;
+      }
     }
   }
   const mx = mxIva;
-  const max60 = mxIva > 0 ? galToShindo(mxIva) : SHINDO[SHINDO.length-1];
+  const max60 = {level: maxShindoLevel, color: maxShindoColor};
   const e1=document.getElementById('shindo-now');
   e1.textContent='震度'+cur.level;e1.style.color=cur.color;e1.style.borderColor=cur.color;
   document.getElementById('shindo-gal').textContent=showGal.toFixed(2)+' gal';
