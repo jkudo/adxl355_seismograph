@@ -473,7 +473,9 @@ function updateShindo(gal,tMs,serverShindo,serverAIva,h,v){
   // serverShindo/serverAIva があればそれを「現在」表示に使う（サーバ側で計測震度Iva簡易計算）
   // 過去の最大は選択期間に合わせてクライアント側ピーク履歴から算出
   const now=Date.now();
-  recentC.push({t:tMs??now,gal});
+  // a_iva も保持（最大震度算出に用いる。生 gal ピークはノイズフロア由来でも 0.8〜1.5gal に
+  // 達するため、0.3秒継続成分の a_iva を使うことで静止時のノイズで震度1表示になるのを防ぐ）
+  recentC.push({t:tMs??now, gal, aIva:(serverAIva!=null?serverAIva:null)});
   const winMs = winSec(win)*1000;
   // メモリ上限のため 24時間でキャップ（長期間はチャートデータも補助に使用）
   const keepMs = Math.min(winMs, 86400000);
@@ -485,15 +487,22 @@ function updateShindo(gal,tMs,serverShindo,serverAIva,h,v){
     ? (SHINDO.find(s=>s.level===serverShindo) || galToShindo(showGal))
     : galToShindo(showGal);
 
-  // 表示期間内に発生した記録イベントの max_gal も最大算出に含める
-  // （チャートは10Hzにbinningされ生125Hzのピークが丸まるため、サイドバー履歴と食い違うのを防ぐ）
-  let mx=Math.max(...recentC.map(p=>p.gal),0);
+  // 最大震度: 期間内の a_iva のピークから算出（ノイズフロアの瞬間 gal ピークを除外）
+  // 過去データ（履歴流し込み）は a_iva が無いため gal を使うが、その場合も noise 切捨て
+  // のため 0.6gal 未満は 0 扱い。
+  let mxIva = 0;
+  for(const p of recentC){
+    if(p.aIva!=null && p.aIva>mxIva) mxIva = p.aIva;
+    else if(p.aIva==null && p.gal>=0.6 && p.gal>mxIva) mxIva = p.gal;
+  }
+  // 表示期間内に発生した記録イベントの max_gal は本物の地震なので含める
   if(Array.isArray(_eventCache)){
     for(const ev of _eventCache){
-      if(ev && ev.start && (now-ev.start)<keepMs && ev.max_gal>mx) mx=ev.max_gal;
+      if(ev && ev.start && (now-ev.start)<keepMs && ev.max_gal>mxIva) mxIva=ev.max_gal;
     }
   }
-  const max60=galToShindo(mx);
+  const mx = mxIva;
+  const max60 = mxIva > 0 ? galToShindo(mxIva) : SHINDO[SHINDO.length-1];
   const e1=document.getElementById('shindo-now');
   e1.textContent='震度'+cur.level;e1.style.color=cur.color;e1.style.borderColor=cur.color;
   document.getElementById('shindo-gal').textContent=showGal.toFixed(2)+' gal';
