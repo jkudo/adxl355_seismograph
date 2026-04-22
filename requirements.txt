@@ -1,0 +1,4 @@
+Flask>=3.0
+gunicorn>=23.0
+spidev>=3.6
+gpiod>=2.2

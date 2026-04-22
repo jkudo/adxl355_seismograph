@@ -1,0 +1,957 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>地震モニター</title>
+<style>
+  :root{
+    --bg:#07090f;--card:#0d1117;--card2:#111827;
+    --border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.12);
+    --text:#e2e8f0;--muted:#4b5563;--dim:#1f2937;
+  }
+  *{box-sizing:border-box;}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+       margin:0;padding:16px 20px;background:var(--bg);color:var(--text);font-size:13px;line-height:1.5;}
+  #wrap{max-width:1500px;margin:0 auto;}
+
+  /* メイン+サイドバー レイアウト */
+  .layout{display:grid;grid-template-columns:1fr 300px;gap:16px;align-items:start;}
+  @media (max-width: 1100px){
+    .layout{grid-template-columns:1fr;}
+    #sidebar{position:static !important;max-height:none !important;}
+  }
+  #sidebar{
+    position:sticky;top:12px;
+    background:var(--card);border:1px solid var(--border);border-radius:10px;
+    padding:12px 12px 6px;
+    max-height:calc(100vh - 24px);overflow-y:auto;
+  }
+  #sidebar h2{
+    font-size:12px;font-weight:600;color:#94a3b8;margin:0 0 8px;
+    padding-bottom:6px;border-bottom:1px solid var(--border);
+    letter-spacing:.04em;
+  }
+  #sidebar .empty{color:var(--muted);font-size:11.5px;padding:6px 2px;}
+  /* サイドバー内では event-item を縦2段にして詰める */
+  #sidebar .event-item{
+    flex-wrap:wrap;gap:6px 8px;padding:7px 9px;font-size:11px;
+  }
+  #sidebar .event-shindo{font-size:13px;min-width:46px;padding:1px 4px;}
+  #sidebar .event-time{flex:1 1 60%;font-size:11px;}
+  #sidebar .event-gal,#sidebar .event-dur{font-size:10.5px;}
+
+  /* ヘッダー */
+  .header{display:flex;align-items:center;gap:10px;margin-bottom:6px;}
+  h1{font-size:15px;font-weight:600;margin:0;letter-spacing:-.02em;color:#f1f5f9;}
+  .conn{display:inline-flex;align-items:center;gap:5px;font-size:11px;
+        padding:2px 9px;border-radius:20px;border:1px solid rgba(34,197,94,0.35);
+        background:rgba(34,197,94,0.08);color:#4ade80;transition:all .3s;}
+  .conn::before{content:'';width:6px;height:6px;border-radius:50%;background:#4ade80;
+                box-shadow:0 0 6px #4ade80;animation:pulse 2s infinite;}
+  .conn.off{border-color:rgba(239,68,68,0.35);background:rgba(239,68,68,0.08);color:#f87171;}
+  .conn.off::before{background:#f87171;box-shadow:0 0 6px #f87171;animation:none;}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+  /* メタ情報 */
+  .meta{color:var(--muted);margin-bottom:10px;font-size:11.5px;line-height:1.7;
+        border-left:2px solid var(--dim);padding-left:10px;}
+  .meta strong{color:#94a3b8;}
+
+  /* コントロール */
+  .controls{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;align-items:center;}
+  .ctrl-lbl{color:var(--muted);font-size:11.5px;}
+  select,button{
+    background:var(--card);color:#94a3b8;
+    border:1px solid var(--border);border-radius:6px;
+    padding:5px 11px;cursor:pointer;font-size:12px;
+    transition:border-color .15s,color .15s,background .15s;
+  }
+  select:hover,button:hover{border-color:var(--border2);color:var(--text);}
+  button.active{
+    background:rgba(59,130,246,0.1);
+    border-color:rgba(59,130,246,0.5);
+    color:#93c5fd;
+  }
+
+  /* 震度インジケーター */
+  .shindo-bar{
+    display:flex;gap:0;margin-bottom:10px;
+    background:var(--card);border:1px solid var(--border);border-radius:10px;
+    overflow:hidden;
+  }
+  .shindo-section{
+    flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:12px 16px;gap:4px;
+    border-right:1px solid var(--border);
+  }
+  .shindo-section:last-child{border-right:none;}
+  .shindo-title{font-size:10px;color:var(--muted);letter-spacing:.07em;text-transform:uppercase;}
+  .shindo-level{
+    font-size:26px;font-weight:700;letter-spacing:-.02em;
+    border:1.5px solid var(--muted);border-radius:7px;
+    padding:1px 16px;color:var(--muted);
+    transition:color .4s,border-color .4s;
+    font-variant-numeric:tabular-nums;
+  }
+  .shindo-sub{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;}
+
+  /* グリッド */
+  .grid{display:grid;grid-template-columns:1fr;gap:7px;}
+  .card{
+    background:var(--card);border:1px solid var(--border);
+    border-radius:9px;padding:8px 12px;
+  }
+  .card:first-child{border-color:rgba(255,255,255,0.11);}
+  .title{font-size:11px;color:var(--muted);margin-bottom:3px;font-weight:500;}
+  .title em{font-style:normal;color:#60a5fa;font-size:10px;margin-left:6px;}
+  canvas{width:100%;height:180px;display:block;}
+  .card:first-child canvas{height:200px;}
+
+  /* 折りたたみ */
+  .detail-toggle{
+    display:flex;align-items:center;gap:8px;
+    padding:8px 12px;margin-bottom:7px;
+    background:var(--card);border:1px solid var(--border);border-radius:8px;
+    cursor:pointer;color:var(--muted);font-size:12px;
+    transition:border-color .15s,color .15s;user-select:none;
+  }
+  .detail-toggle:hover{border-color:var(--border2);color:var(--text);}
+  .detail-toggle .arrow{font-size:10px;transition:transform .25s;}
+  .detail-toggle.open .arrow{transform:rotate(90deg);}
+  #detail-section{
+    display:grid;grid-template-columns:1fr;gap:7px;
+    overflow:hidden;max-height:0;
+    transition:max-height .35s ease;
+  }
+  #detail-section.open{max-height:6000px;}
+
+  /* 地震アラートバナー */
+  #quake-banner{
+    display:none;align-items:center;gap:12px;
+    margin-bottom:10px;padding:10px 16px;
+    background:rgba(239,68,68,0.12);
+    border:1px solid rgba(239,68,68,0.45);
+    border-radius:9px;animation:flashbg 1s ease 3;
+  }
+  #quake-banner.active{display:flex;}
+  @keyframes flashbg{
+    0%,100%{background:rgba(239,68,68,0.12);}
+    50%{background:rgba(239,68,68,0.28);}
+  }
+  .banner-icon{font-size:22px;line-height:1;}
+  .banner-body{flex:1;}
+  .banner-title{font-size:13px;font-weight:700;color:#fca5a5;letter-spacing:-.01em;}
+  .banner-sub{font-size:11.5px;color:#f87171;margin-top:2px;}
+  .banner-shindo{
+    font-size:28px;font-weight:800;color:#fca5a5;
+    border:2px solid rgba(239,68,68,0.6);border-radius:7px;
+    padding:2px 14px;letter-spacing:-.02em;
+  }
+  .banner-close{background:none;border:none;color:#6b7280;cursor:pointer;
+                 font-size:16px;padding:2px 6px;line-height:1;}
+  .banner-close:hover{color:#f87171;}
+
+  /* 地震履歴リスト */
+  #event-list{margin-bottom:10px;}
+  .event-item{
+    display:flex;align-items:center;gap:10px;
+    padding:6px 12px;background:var(--card);
+    border:1px solid var(--border);border-radius:7px;margin-bottom:4px;
+    font-size:11.5px;
+  }
+  .event-shindo{
+    font-size:15px;font-weight:700;min-width:40px;text-align:center;
+    border:1.5px solid;border-radius:5px;padding:1px 8px;
+  }
+  .event-time{color:var(--muted);flex:1;}
+  .event-gal{color:#94a3b8;}
+  .event-dur{color:var(--muted);}
+  .event-item{cursor:pointer;transition:background 0.15s;}
+  .event-item:hover{background:#1e293b;}
+
+  /* 地震詳細モーダル */
+  .modal-mask{
+    display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);
+    z-index:1000;align-items:center;justify-content:center;
+  }
+  .modal-mask.active{display:flex;}
+  .modal-box{
+    background:var(--card);border:1px solid var(--border);border-radius:10px;
+    padding:18px 22px;max-width:480px;width:90%;color:#e2e8f0;
+    box-shadow:0 10px 40px rgba(0,0,0,0.6);
+  }
+  .modal-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;
+              padding-bottom:10px;border-bottom:1px solid var(--border);}
+  .modal-shindo{font-size:22px;font-weight:700;border:2px solid;border-radius:6px;
+                padding:3px 12px;min-width:54px;text-align:center;}
+  .modal-time{color:var(--muted);font-size:13px;flex:1;}
+  .modal-close{background:none;border:none;color:#94a3b8;font-size:18px;
+               cursor:pointer;padding:2px 6px;}
+  .modal-close:hover{color:#f87171;}
+  .modal-row{display:flex;justify-content:space-between;padding:5px 0;font-size:13px;}
+  .modal-row .k{color:var(--muted);}
+  .modal-row .v{color:#e2e8f0;font-weight:600;}
+  .modal-type{margin-top:12px;padding:10px;background:#0f172a;border-radius:6px;
+              border-left:3px solid #fbbf24;}
+  .modal-type-label{font-size:12px;color:var(--muted);margin-bottom:4px;}
+  .modal-type-val{font-size:15px;font-weight:600;}
+  .modal-note{margin-top:10px;font-size:11px;color:var(--muted);line-height:1.5;}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+</head>
+<body>
+<div id="dbg" style="position:fixed;top:0;left:0;right:0;background:#7c2d12;color:#fef3c7;font:11px monospace;padding:4px 8px;z-index:99999;border-bottom:1px solid #fbbf24;display:none;white-space:pre-wrap;max-height:40vh;overflow:auto"></div>
+<script>
+(function(){
+  const dbg=document.getElementById('dbg');
+  let logs=[];
+  // デバッグバーは非表示（ログはコンソールにのみ出力）。確認したい場合は localStorage.dbg='1' を設定。
+  const VISIBLE = (typeof localStorage!=='undefined' && localStorage.getItem('dbg')==='1');
+  function show(){
+    if(VISIBLE){dbg.style.display='block';dbg.textContent=logs.slice(-20).join('\n');}
+  }
+  window.__dbg=function(msg){logs.push('['+new Date().toLocaleTimeString()+'] '+msg); try{console.log('[dbg]',msg);}catch(_){} show();};
+  window.addEventListener('error',e=>{__dbg('ERR: '+(e.message||e)+' @'+(e.filename||'?')+':'+(e.lineno||'?'));});
+  window.addEventListener('unhandledrejection',e=>{__dbg('PROMISE ERR: '+(e.reason&&e.reason.message||e.reason));});
+  __dbg('script loaded ok');
+})();
+</script>
+<div id="wrap">
+
+  <div class="header">
+    <h1>地震モニター</h1>
+    <span id="conn-status" class="conn off">接続待機</span>
+    <span id="sse-count" style="display:none;margin-left:10px;color:#94a3b8;font-size:11px">recv 0</span>
+  </div>
+
+  <div class="meta">
+    リアルタイム 10Hz ピーク配信 ／ 履歴：短期=1秒・長期=1分ピーク。
+    X/Y=水平、Z=鉛直、H=√(X²+Y²)、V=|Z|。<br>
+    <strong>地震時：</strong> V/Z が先に反応（P波・縦揺れ）→ H/X/Y が大きく動く（S波・横揺れ）。
+    破線は各震度の下限（簡易換算値）。<br>
+    💡 メイングラフをドラッグすると過去の任意範囲をズーム表示できます。
+  </div>
+
+  <div class="controls">
+    <span class="ctrl-lbl">期間</span>
+    <select id="windowSelect">
+      <option value="1m">1分</option>
+      <option value="5m" selected>5分</option>
+      <option value="10m">10分</option>
+      <option value="30m">30分</option>
+      <option value="1h">1時間</option>
+      <option value="6h">6時間</option>
+      <option value="12h">12時間</option>
+      <option value="24h">24時間</option>
+      <option value="1w">1週間</option>
+      <option value="1mo">1か月</option>
+      <option value="3mo">3か月</option>
+      <option value="1y">1年</option>
+    </select>
+    <span class="ctrl-lbl" style="margin-left:6px">Y レンジ</span>
+    <button data-range="25" class="active">±25</button>
+    <button data-range="100">±100</button>
+    <button data-range="200">±200</button>
+    <button data-range="400">±400</button>
+    <span class="ctrl-lbl" style="margin-left:6px">集計</span>
+    <button data-iv="0"   class="active iv-btn">自動</button>
+    <button data-iv="1"   class="iv-btn">1秒</button>
+    <button data-iv="5"   class="iv-btn">5秒</button>
+    <button data-iv="30"  class="iv-btn">30秒</button>
+    <button data-iv="60"  class="iv-btn">1分</button>
+    <button data-iv="300" class="iv-btn">5分</button>
+    <button data-iv="600" class="iv-btn">10分</button>
+    <button id="resetZoomBtn" style="margin-left:10px;display:none;background:#1e293b;color:#fbbf24;border:1px solid #fbbf24" onclick="resetCustomRange()">⟲ ライブに戻る</button>
+    <span id="customRangeLabel" style="margin-left:8px;color:#fbbf24;font-size:11px;display:none"></span>
+    <button id="recalBtn" style="margin-left:10px;background:#1e293b;color:#22d3ee;border:1px solid #22d3ee" onclick="doRecalibrate()" title="センサーが完全に静止していることを確認してから実行してください">⚙ 再キャリブレーション</button>
+    <span id="recalStatus" style="margin-left:6px;color:#94a3b8;font-size:11px"></span>
+  </div>
+
+  <div class="shindo-bar">
+    <div class="shindo-section">
+      <div class="shindo-title">現在の推定震度</div>
+      <div id="shindo-now" class="shindo-level">—</div>
+      <div id="shindo-gal" class="shindo-sub">— gal</div>
+    </div>
+    <div class="shindo-section">
+      <div class="shindo-title" id="shindo-max-title">最大（1 分）</div>
+      <div id="shindo-max" class="shindo-level">—</div>
+      <div id="shindo-max-gal" class="shindo-sub">— gal</div>
+    </div>
+    <div class="shindo-section">
+      <div class="shindo-title">横揺れ H</div>
+      <div id="hv-h" class="shindo-level" style="font-size:24px;color:#60a5fa;border-color:#60a5fa">—</div>
+      <div class="shindo-sub">gal</div>
+    </div>
+    <div class="shindo-section">
+      <div class="shindo-title">縦揺れ V</div>
+      <div id="hv-v" class="shindo-level" style="font-size:24px;color:#22d3ee;border-color:#22d3ee">—</div>
+      <div class="shindo-sub">gal</div>
+    </div>
+    <div class="shindo-section">
+      <div class="shindo-title">揺れの種類 (H/V)</div>
+      <div id="hv-ratio" class="shindo-level" style="font-size:22px;color:#fbbf24;border-color:#fbbf24">—</div>
+      <div id="hv-type" class="shindo-sub">—</div>
+    </div>
+  </div>
+
+  <!-- 地震アラートバナー -->
+  <div id="quake-banner">
+    <div class="banner-icon">🚨</div>
+    <div class="banner-body">
+      <div class="banner-title" id="banner-title">地震検知</div>
+      <div class="banner-sub" id="banner-sub">解析中...</div>
+    </div>
+    <div class="banner-shindo" id="banner-shindo">—</div>
+    <button class="banner-close" onclick="closeBanner()">✕</button>
+  </div>
+
+  <!-- 地震詳細モーダル -->
+  <div id="event-modal" class="modal-mask" onclick="if(event.target===this)closeEventModal()">
+    <div class="modal-box">
+      <div class="modal-head">
+        <div id="m-shindo" class="modal-shindo">—</div>
+        <div id="m-time" class="modal-time">—</div>
+        <button class="modal-close" onclick="closeEventModal()">✕</button>
+      </div>
+      <div id="m-body"></div>
+    </div>
+  </div>
+
+  <div class="layout">
+   <div class="main-col">
+    <div class="grid">
+    <div class="card">
+      <div class="title">合成加速度 √(X²+Y²+Z²)<em>← 震度の目安</em></div>
+      <div id="cc-wrap" style="position:relative">
+        <canvas id="cc"></canvas>
+        <div id="cc-selrect" style="position:absolute;top:0;height:100%;
+             background:rgba(96,165,250,0.2);border-left:1px solid #60a5fa;
+             border-right:1px solid #60a5fa;display:none;pointer-events:none;"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="detail-toggle" id="detail-toggle" onclick="toggleDetail()">
+    <span class="arrow">▶</span>
+    <span id="detail-label">横揺れ / 縦揺れ / X・Y・Z 軸を表示</span>
+  </div>
+  <div id="detail-section">
+    <div class="card"><div class="title">横揺れ H = √(X²+Y²)<em>← 水平合成</em></div><canvas id="ch"></canvas></div>
+    <div class="card"><div class="title">縦揺れ V = |Z|<em>← 鋛直成分</em></div><canvas id="cv"></canvas></div>
+    <div class="card"><div class="title">X 軸（水平・緑）</div><canvas id="cx"></canvas></div>
+    <div class="card"><div class="title">Y 軸（水平・赤）</div><canvas id="cy"></canvas></div>
+    <div class="card"><div class="title">Z 軸（鋛直・紫）</div><canvas id="cz"></canvas></div>
+  </div>
+   </div><!-- /main-col -->
+
+   <aside id="sidebar">
+    <h2>📋 過去の地震履歴</h2>
+    <div id="event-list"><div class="empty">記録なし</div></div>
+   </aside>
+  </div><!-- /layout -->
+</div>
+
+<script>
+/* ── ユーティリティ ── */
+const unitMap={'1m':'second','5m':'second','10m':'second','30m':'minute','1h':'minute',
+               '6h':'hour','12h':'hour','24h':'hour','1w':'day','1mo':'day','3mo':'week','1y':'month'};
+function winSec(w){
+  if(w.endsWith('mo'))return +w.slice(0,-2)*2592000;
+  if(w.endsWith('m')) return +w.slice(0,-1)*60;
+  if(w.endsWith('h')) return +w.slice(0,-1)*3600;
+  if(w==='1w')        return 604800;
+  if(w==='1y')        return 31536000;
+  return 60;
+}
+function winLabel(w){
+  const map={'1m':'1 分','5m':'5 分','10m':'10 分','30m':'30 分','1h':'1 時間',
+             '6h':'6 時間','12h':'12 時間','24h':'24 時間','1w':'1 週間',
+             '1mo':'1 か月','3mo':'3 か月','1y':'1 年'};
+  return map[w]||w;
+}
+function maxPointsFor(win,hz=10){return Math.min(12000,hz*winSec(win)+200);}
+
+/* ── Chart.js 共通設定 ── */
+Chart.defaults.animation=false;
+
+/* ── 震度参照ライン プラグイン ── */
+const SEISMIC_LINES=[
+  {gal:2.5,  label:'震度2', color:'rgba(100,220,100,0.7)'},
+  {gal:8,    label:'震度3', color:'rgba(210,210,50,0.7)'},
+  {gal:25,   label:'震度4', color:'rgba(255,155,30,0.7)'},
+  {gal:80,   label:'震度5弱',color:'rgba(255,85,30,0.7)'},
+  {gal:140,  label:'震度5強',color:'rgba(255,45,45,0.7)'},
+  {gal:250,  label:'震度6弱',color:'rgba(195,45,215,0.7)'},
+  {gal:315,  label:'震度6強',color:'rgba(140,25,195,0.7)'},
+  {gal:400,  label:'震度7', color:'rgba(90,5,170,0.7)'},
+];
+const seismicPlugin={
+  id:'seismic',
+  afterDraw(chart){
+    const{ctx,chartArea:{left,right,top,bottom},scales:{y}}=chart;
+    const posOnly=['cc','ch','cv'].includes(chart.canvas.id);
+    ctx.save();
+    ctx.font='10px system-ui';
+    ctx.textBaseline='bottom';
+    for(const{gal,label,color}of SEISMIC_LINES){
+      for(const sign of[1,-1]){
+        if(posOnly&&sign<0)continue;
+        const yp=y.getPixelForValue(gal*sign);
+        if(yp<top||yp>bottom)continue;
+        ctx.strokeStyle=color;ctx.lineWidth=0.85;ctx.setLineDash([5,4]);
+        ctx.beginPath();ctx.moveTo(left,yp);ctx.lineTo(right,yp);ctx.stroke();
+        if(sign===1){ctx.fillStyle=color;ctx.textAlign='right';ctx.fillText(label,right-4,yp-1);}
+      }
+    }
+    ctx.restore();
+  }
+};
+Chart.register(seismicPlugin);
+
+/* ── グリッド線 ── */
+function yGrid(){
+  return{
+    color:ctx=>(ctx.tick.value%50===0?'rgba(255,255,255,0.1)':'rgba(255,255,255,0.04)'),
+    lineWidth:ctx=>(ctx.tick.value%50===0?0.8:0.4)
+  };
+}
+
+/* ── チャート生成 ── */
+function makeChart(id,color,fill=false){
+  const posOnly = ['cc','ch','cv'].includes(id);
+  return new Chart(document.getElementById(id).getContext('2d'),{
+    type:'line',
+    data:{datasets:[{data:[],borderColor:color,
+      backgroundColor:fill?color+'28':color,
+      fill:fill,borderWidth:1.5,pointRadius:0,tension:0.15}]},
+    options:{
+      responsive:true,parsing:false,normalized:true,
+      scales:{
+        x:{type:'time',
+           time:{unit:'second',
+                 displayFormats:{millisecond:'HH:mm:ss.SSS',second:'HH:mm:ss',
+                                 minute:'HH:mm',hour:'HH:mm',
+                                 day:'MM/dd',week:'MM/dd',month:'yyyy/MM',
+                                 quarter:'yyyy/MM',year:'yyyy'},
+                 tooltipFormat:'yyyy/MM/dd HH:mm:ss'},
+           ticks:{color:'#374151',maxRotation:0,font:{size:10}},
+           grid:{color:'rgba(255,255,255,0.04)'}},
+        y:{min: posOnly ? 0 : -25, max:25,
+           ticks:{color:'#374151',stepSize:50,font:{size:10}},
+           grid:yGrid()}
+      },
+      plugins:{legend:{display:false},
+               decimation:{enabled:true,algorithm:'lttb',samples:800}}
+    }
+  });
+}
+
+/* ── 震度推定 ── */
+const SHINDO=[
+  {min:400,level:'7',  color:'#c026d3'},
+  {min:315,level:'6強',color:'#7c3aed'},
+  {min:250,level:'6弱',color:'#a855f7'},
+  {min:140,level:'5強',color:'#dc2626'},
+  {min:80, level:'5弱',color:'#ef4444'},
+  {min:25, level:'4',  color:'#f97316'},
+  {min:8,  level:'3',  color:'#ca8a04'},
+  {min:2.5,level:'2',  color:'#16a34a'},
+  {min:0.8,level:'1',  color:'#6b7280'},
+  {min:0,  level:'0',  color:'#374151'},
+];
+function galToShindo(g){return SHINDO.find(s=>g>=s.min)||SHINDO.at(-1);}
+
+let recentC=[];
+function updateShindo(gal,tMs,serverShindo,serverAIva,h,v){
+  // serverShindo/serverAIva があればそれを「現在」表示に使う（サーバ側で計測震度Iva簡易計算）
+  // 過去の最大は選択期間に合わせてクライアント側ピーク履歴から算出
+  const now=Date.now();
+  recentC.push({t:tMs??now,gal});
+  const winMs = winSec(win)*1000;
+  // メモリ上限のため 24時間でキャップ（長期間はチャートデータも補助に使用）
+  const keepMs = Math.min(winMs, 86400000);
+  recentC=recentC.filter(p=>now-p.t<keepMs);
+
+  // 表示用 gal: a_iva（=直近3秒で0.3秒以上継続した最大加速度）があればそれ、無ければ生 gal
+  const showGal = (serverAIva!=null && serverAIva>0) ? serverAIva : gal;
+  const cur = serverShindo
+    ? (SHINDO.find(s=>s.level===serverShindo) || galToShindo(showGal))
+    : galToShindo(showGal);
+
+  const mx=Math.max(...recentC.map(p=>p.gal),0);
+  const max60=galToShindo(mx);
+  const e1=document.getElementById('shindo-now');
+  e1.textContent='震度'+cur.level;e1.style.color=cur.color;e1.style.borderColor=cur.color;
+  document.getElementById('shindo-gal').textContent=showGal.toFixed(2)+' gal';
+  const eMaxTitle=document.getElementById('shindo-max-title');
+  if(eMaxTitle) eMaxTitle.textContent='最大（'+winLabel(win)+'）';
+  const e2=document.getElementById('shindo-max');
+  e2.textContent='震度'+max60.level;e2.style.color=max60.color;e2.style.borderColor=max60.color;
+  document.getElementById('shindo-max-gal').textContent=mx.toFixed(2)+' gal';
+  if(h!=null){const eh=document.getElementById('hv-h'); if(eh) eh.textContent=h.toFixed(2);}
+  if(v!=null){const ev=document.getElementById('hv-v'); if(ev) ev.textContent=v.toFixed(2);}
+  if(h!=null && v!=null){
+    const er=document.getElementById('hv-ratio'); const et=document.getElementById('hv-type');
+    if(er && et){
+      if(Math.max(h,v) < 1.0){ er.textContent='静穏'; et.textContent='揺れなし'; }
+      else {
+        const r = h / Math.max(v, 0.01);
+        er.textContent = r.toFixed(2);
+        let label, color;
+        if(r >= 2.0){ label='横揺れ主体 (S波/遠地型)'; color='#60a5fa'; }
+        else if(r >= 1.2){ label='横揺れやや優勢'; color='#93c5fd'; }
+        else if(r >= 0.8){ label='縦横同程度'; color='#fbbf24'; }
+        else if(r >= 0.5){ label='縦揺れやや優勢'; color='#fb923c'; }
+        else            { label='縦揺れ主体 (P波/直下型)'; color='#22d3ee'; }
+        et.textContent = label;
+        er.style.color = color; er.style.borderColor = color;
+      }
+    }
+  }
+}
+
+/* ── チャート一覧 ── */
+const charts={
+  c:makeChart('cc','#e2e8f0',true),
+  x:makeChart('cx','#34d399'),
+  y:makeChart('cy','#f87171'),
+  z:makeChart('cz','#c084fc'),
+  h:makeChart('ch','#60a5fa',true),
+  v:makeChart('cv','#22d3ee',true),
+};
+
+function setXUnit(u){Object.values(charts).forEach(c=>c.options.scales.x.time.unit=u);}
+function setYRange(r){
+  Object.entries(charts).forEach(([k,c])=>{
+    const posOnly = ['c','h','v'].includes(k);
+    c.options.scales.y.min = posOnly ? 0 : -r;
+    c.options.scales.y.max = r;
+  });
+}
+function setXWin(now,span){Object.values(charts).forEach(c=>{c.options.scales.x.min=now-span;c.options.scales.x.max=now;});}
+
+/* ── 履歴読み込み ── */
+let ivSec=0;  // 集計間隔（秒）、0=自動
+
+async function loadHistory(w){
+  const url=`/history?window=${encodeURIComponent(w)}&interval=${ivSec}`;
+  const res=await fetch(url);
+  const arr=await res.json();
+  charts.c.data.datasets[0].data=arr.map(d=>({x:d.t,y:d.c??0}));
+  charts.x.data.datasets[0].data=arr.map(d=>({x:d.t,y:d.ax}));
+  charts.y.data.datasets[0].data=arr.map(d=>({x:d.t,y:d.ay}));
+  charts.z.data.datasets[0].data=arr.map(d=>({x:d.t,y:d.az}));
+  charts.h.data.datasets[0].data=arr.map(d=>({x:d.t,y:d.h}));
+  charts.v.data.datasets[0].data=arr.map(d=>({x:d.t,y:d.v}));
+  // 期間内最大震度算出のために過去データを recentC に流し込む
+  const winMs=winSec(w)*1000, nowMs=Date.now();
+  recentC = arr.filter(d=>nowMs-d.t<Math.min(winMs,86400000))
+               .map(d=>({t:d.t, gal:d.c??0}));
+  if(arr.length){const last=arr.at(-1); updateShindo(last.c??0,last.t,undefined,undefined,last.h,last.v);}
+  const now=Date.now(),span=winSec(w)*1000;
+  setXUnit(unitMap[w]||'second');
+  setXWin(now,span);
+  Object.values(charts).forEach(c=>c.update('none'));
+}
+
+/* ── 折りたたみ ── */
+let detailOpen=false;
+function toggleDetail(){
+  detailOpen=!detailOpen;
+  document.getElementById('detail-section').classList.toggle('open',detailOpen);
+  document.getElementById('detail-toggle').classList.toggle('open',detailOpen);
+  document.getElementById('detail-label').textContent=
+    detailOpen?'横揺れ / 縦揺れ / X・Y・Z 軸を隠す':'横揺れ / 縦揺れ / X・Y・Z 軸を表示';
+  if(detailOpen) Object.values(charts).forEach(c=>c.update('none'));
+}
+
+/* ── ライブストリーム ── */
+let es=null,win='5m',buffer=[],maxPts=maxPointsFor(win);
+let _liveCarry=[];  // 集計中の未完了binを持ち越す
+let customRange=null;  // {start, end} epoch ms - カスタム範囲ズーム中はライブ更新を停止
+
+async function onCustomZoom(xMin, xMax){
+  if(xMin==null||xMax==null) return;
+  const span = xMax - xMin;
+  if(span < 5000) return; // 最小5秒未満はズームしない
+  customRange = {start: Math.round(xMin), end: Math.round(xMax)};
+  document.getElementById('resetZoomBtn').style.display='inline-block';
+  const lbl=document.getElementById('customRangeLabel');
+  lbl.style.display='inline';
+  const fmt=t=>new Date(t).toLocaleString('ja-JP',{month:'2-digit',day:'2-digit',
+             hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+  lbl.textContent = `範囲: ${fmt(xMin)} 〜 ${fmt(xMax)}`;
+  await loadHistoryRange(customRange.start, customRange.end);
+}
+
+function resetCustomRange(){
+  customRange = null;
+  document.getElementById('resetZoomBtn').style.display='none';
+  document.getElementById('customRangeLabel').style.display='none';
+  loadHistory(win);
+}
+
+async function loadHistoryRange(startMs, endMs){
+  const url=`/history?start=${startMs}&end=${endMs}&interval=${ivSec}`;
+  const res=await fetch(url);
+  const arr=await res.json();
+  charts.c.data.datasets[0].data=arr.map(d=>({x:d.t,y:d.c??0}));
+  charts.x.data.datasets[0].data=arr.map(d=>({x:d.t,y:d.ax}));
+  charts.y.data.datasets[0].data=arr.map(d=>({x:d.t,y:d.ay}));
+  charts.z.data.datasets[0].data=arr.map(d=>({x:d.t,y:d.az}));
+  charts.h.data.datasets[0].data=arr.map(d=>({x:d.t,y:d.h}));
+  charts.v.data.datasets[0].data=arr.map(d=>({x:d.t,y:d.v}));
+  // 期間内最大震度をカスタム範囲データから再計算
+  recentC = arr.map(d=>({t:d.t, gal:d.c??0}));
+  if(arr.length){const last=arr.at(-1); updateShindo(last.c??0,last.t,undefined,undefined,last.h,last.v);}
+  // 期間長に応じた時間単位
+  const span=(endMs-startMs)/1000;
+  let unit='second';
+  if(span>86400*7) unit='day';
+  else if(span>86400) unit='hour';
+  else if(span>3600) unit='minute';
+  setXUnit(unit);
+  Object.values(charts).forEach(c=>{
+    c.options.scales.x.min=startMs; c.options.scales.x.max=endMs;
+    c.update('none');
+  });
+}
+
+function _avgField(arr,f){return arr.reduce((s,p)=>s+(p[f]??0),0)/arr.length;}
+
+function flushBuffer(){
+  if(!buffer.length)return;
+  // カスタム範囲ズーム中はライブ更新停止（データは蔓延防止のため捨てる）
+  if(customRange){buffer.length=0; return;}
+
+  // 持ち越し + 今回受信 をまとめる
+  const all=[..._liveCarry,...buffer];
+  buffer.length=0;
+
+  let points;
+  if(ivSec<=0){
+    // 生 10Hz — そのまま全部プロット
+      points=all.map(p=>({t:p.t*1000,ax:p.ax,ay:p.ay,az:p.az,h:p.h,v:p.v,c:p.c??0,shindo:p.shindo,a_iva:p.a_iva}));
+    _liveCarry=[];
+  } else {
+    // bin平均: 完了したbinだけプロット、現在進行中のbinは持ち越す
+    const nowBin=Math.floor(Date.now()/1000/ivSec)*ivSec;
+    const bins={};
+    for(const p of all){
+      const b=Math.floor(p.t/ivSec)*ivSec;
+      if(!bins[b])bins[b]=[];
+      bins[b].push(p);
+    }
+    points=[];
+    _liveCarry=[];
+    for(const [bs,ps] of Object.entries(bins)){
+      const b=Number(bs);
+      if(b>=nowBin){_liveCarry.push(...ps);continue;}  // 未完了
+      points.push({
+        t:b*1000,
+        ax:_avgField(ps,'ax'),ay:_avgField(ps,'ay'),az:_avgField(ps,'az'),
+        h:_avgField(ps,'h'),v:_avgField(ps,'v'),c:_avgField(ps,'c')
+      });
+    }
+    points.sort((a,b)=>a.t-b.t);
+  }
+
+  if(!points.length)return;
+  const lastP=points.at(-1);
+  const lastC=lastP.c;
+  for(const p of points){
+    charts.c.data.datasets[0].data.push({x:p.t,y:p.c});
+    charts.x.data.datasets[0].data.push({x:p.t,y:p.ax});
+    charts.y.data.datasets[0].data.push({x:p.t,y:p.ay});
+    charts.z.data.datasets[0].data.push({x:p.t,y:p.az});
+    charts.h.data.datasets[0].data.push({x:p.t,y:p.h});
+    charts.v.data.datasets[0].data.push({x:p.t,y:p.v});
+  }
+  updateShindo(lastC, lastP.t, lastP.shindo, lastP.a_iva, lastP.h, lastP.v);
+  Object.values(charts).forEach(c=>{
+    const d=c.data.datasets[0].data;
+    if(d.length>maxPts)d.splice(0,d.length-maxPts);
+  });
+  const last=charts.c.data.datasets[0].data.at(-1);
+  if(last)setXWin(last.x,winSec(win)*1000);
+  const toRender=detailOpen?Object.values(charts):[charts.c];
+  toRender.forEach(c=>c.update('none'));
+}
+
+function attachLive(){
+  if(es){es.close();es=null;}
+  buffer.length=0;
+  if(window.__dbg)__dbg('attachLive: connecting /stream_ui');
+  es=new EventSource('/stream_ui');
+  es.onopen=()=>{const s=document.getElementById('conn-status');s.textContent='接続中';s.className='conn';if(window.__dbg)__dbg('SSE open');};
+  es.onmessage=ev=>{
+    try{
+      const d=JSON.parse(ev.data);
+      if(d.type==='quake_start'){showBannerStart(d);}
+      else if(d.type==='quake_end'){showBannerEnd(d);}
+      else if(d.type==='recal_start'){setRecalStatus('実行中...','#22d3ee');}
+      else if(d.type==='recal_done'){setRecalStatus('完了','#22c55e');setTimeout(()=>setRecalStatus('',''),3000);document.getElementById('recalBtn').disabled=false;}
+      else if(d.type==='recal_error'){setRecalStatus('失敗: '+(d.err||''),'#ef4444');document.getElementById('recalBtn').disabled=false;}
+      else{buffer.push(d); window.__sseN=(window.__sseN||0)+1; const e=document.getElementById('sse-count'); if(e)e.textContent='recv '+window.__sseN;}
+    }catch(e){if(window.__dbg)__dbg('parse err: '+e.message);}
+  };
+  es.onerror=()=>{
+    const s=document.getElementById('conn-status');s.textContent='切断';s.className='conn off';
+    if(window.__dbg)__dbg('SSE error/reconnect');
+    setTimeout(attachLive,3000);
+  };
+}
+
+/* ── RAF レンダーループ（タブ非表示時は自動停止）── */
+let _lastRender=0;
+(function _raf(ts){
+  requestAnimationFrame(_raf);
+  if(document.hidden||ts-_lastRender<200)return;
+  _lastRender=ts;
+  if(buffer.length)flushBuffer();
+})();
+
+/* ── イベントハンドラ ── */
+document.getElementById('windowSelect').addEventListener('change',async e=>{
+  // 期間変更時はカスタム範囲を解除
+  if(customRange){
+    customRange=null;
+    document.getElementById('resetZoomBtn').style.display='none';
+    document.getElementById('customRangeLabel').style.display='none';
+  }
+  win=e.target.value;maxPts=maxPointsFor(win);await loadHistory(win);
+});
+document.querySelectorAll('button[data-range]').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('button[data-range]').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    setYRange(Number(btn.dataset.range));
+    Object.values(charts).forEach(c=>c.update('none'));
+  });
+});
+
+/* ── 手動再キャリブレーション ── */
+function setRecalStatus(msg,color){
+  const e=document.getElementById('recalStatus');
+  if(!e) return;
+  e.textContent=msg;
+  e.style.color=color||'#94a3b8';
+}
+async function doRecalibrate(){
+  if(!confirm('再キャリブレーションを実行します。\n\nセンサーが完全に静止していることを確認してください。\n（揺れている状態で実行すると正しく0点が取れません）\n\n約10秒かかります。実行しますか？')) return;
+  const btn=document.getElementById('recalBtn');
+  btn.disabled=true;
+  setRecalStatus('要求送信中...','#fbbf24');
+  try{
+    const res=await fetch('/recalibrate',{method:'POST'});
+    const j=await res.json();
+    if(!res.ok){setRecalStatus(j.msg||'エラー','#ef4444'); btn.disabled=false; return;}
+    setRecalStatus('要求受信。間もなく開始...','#fbbf24');
+    // 完了通知は SSE recal_done で受け取る
+  }catch(e){setRecalStatus('通信失敗: '+e.message,'#ef4444'); btn.disabled=false;}
+}
+
+/* ── 地震アラートバナー ── */
+let _bannerTimer=null;
+function showBannerStart(d){
+  document.getElementById('banner-title').textContent='地震検知中 — 解析中...';
+  document.getElementById('banner-sub').textContent=`STA/LTA比 ${d.ratio}`;
+  document.getElementById('banner-shindo').textContent='...';
+  document.getElementById('banner-shindo').style.color='#fca5a5';
+  document.getElementById('banner-shindo').style.borderColor='rgba(239,68,68,0.6)';
+  const b=document.getElementById('quake-banner');
+  b.classList.add('active');
+  if(_bannerTimer){clearTimeout(_bannerTimer);_bannerTimer=null;}
+}
+function showBannerEnd(d){
+  const sh=d.shindo;
+  const info=SHINDO.find(s=>s.level===sh)||{color:'#fca5a5'};
+  document.getElementById('banner-title').textContent=`地震終了 — 推定震度 ${sh}`;
+  document.getElementById('banner-sub').textContent=
+    `最大 ${d.max_gal} gal ／ 継続 ${d.duration} 秒`;
+  const se=document.getElementById('banner-shindo');
+  se.textContent='震度'+sh;se.style.color=info.color;se.style.borderColor=info.color;
+  const b=document.getElementById('quake-banner');
+  b.classList.remove('active');b.classList.add('active');
+  if(_bannerTimer)clearTimeout(_bannerTimer);
+  _bannerTimer=setTimeout(()=>{
+    b.classList.remove('active');_bannerTimer=null;
+  },30000);
+  loadEventList();
+}
+function closeBanner(){
+  document.getElementById('quake-banner').classList.remove('active');
+  if(_bannerTimer){clearTimeout(_bannerTimer);_bannerTimer=null;}
+}
+
+/* ── 地震履歴リスト ── */
+let _eventCache=[];
+function classifyHV(h, v){
+  if(h==null || v==null) return {label:'不明 (旧データ)', color:'#94a3b8', desc:'H/V データなし'};
+  if(Math.max(h,v) < 1.0) return {label:'微弱', color:'#94a3b8', desc:'判定に十分な振幅なし'};
+  const r = h / Math.max(v, 0.01);
+  if(r >= 2.0) return {label:'横揺れ主体 (S波/遠地型)', color:'#60a5fa',
+                       desc:'横方向の揺れが優勢。震源が遠い地震や、S波が卓越する典型的な揺れ方です。'};
+  if(r >= 1.2) return {label:'横揺れやや優勢', color:'#93c5fd',
+                       desc:'横揺れがやや強い。一般的な地震波形です。'};
+  if(r >= 0.8) return {label:'縦横同程度', color:'#fbbf24',
+                       desc:'縦・横の振幅が同程度。中間的な揺れ方です。'};
+  if(r >= 0.5) return {label:'縦揺れやや優勢', color:'#fb923c',
+                       desc:'縦揺れがやや強い。比較的近い震源の可能性。'};
+  return {label:'縦揺れ主体 (P波/直下型)', color:'#22d3ee',
+          desc:'縦方向の揺れが優勢。直下型地震や、P波が到達した直後の典型的な揺れ方です。'};
+}
+function openEventModal(idx){
+  const e=_eventCache[idx]; if(!e) return;
+  const info=SHINDO.find(s=>s.level===e.shindo)||{color:'#94a3b8'};
+  const sh=document.getElementById('m-shindo');
+  sh.textContent='震度'+e.shindo; sh.style.color=info.color; sh.style.borderColor=info.color;
+  const dt=new Date(e.start);
+  document.getElementById('m-time').textContent=
+    dt.toLocaleString('ja-JP',{year:'numeric',month:'2-digit',day:'2-digit',
+      hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+  const cls=classifyHV(e.max_h, e.max_v);
+  const ratio = (e.max_h!=null && e.max_v!=null && e.max_v>0.01)
+                ? (e.max_h/e.max_v).toFixed(2) : '—';
+  // 揺れの強さの簡易解説
+  let intensityNote='';
+  if(e.max_gal>=80) intensityNote='強い揺れ。家具転倒・落下物の危険。';
+  else if(e.max_gal>=25) intensityNote='中程度の揺れ。大きく揺れたと感じる。';
+  else if(e.max_gal>=8) intensityNote='弱い揺れ。屋内でほとんどの人が感じる。';
+  else if(e.max_gal>=2.5) intensityNote='ごく弱い揺れ。屋内の一部の人が感じる。';
+  else intensityNote='微弱な振動。人体感覚には届かない可能性。';
+  // 継続時間の解説
+  let durNote='';
+  if(e.duration>=60) durNote='長時間継続。大規模地震または遠地地震の可能性。';
+  else if(e.duration>=20) durNote='やや長い継続時間。';
+  else if(e.duration>=10) durNote='一般的な継続時間。';
+  else durNote='短時間の揺れ。';
+  document.getElementById('m-body').innerHTML=`
+    <div class="modal-row"><span class="k">最大加速度（合成）</span><span class="v">${e.max_gal.toFixed(2)} gal</span></div>
+    <div class="modal-row"><span class="k">最大 横揺れ H</span><span class="v">${e.max_h!=null?e.max_h.toFixed(2)+' gal':'—'}</span></div>
+    <div class="modal-row"><span class="k">最大 縦揺れ V</span><span class="v">${e.max_v!=null?e.max_v.toFixed(2)+' gal':'—'}</span></div>
+    <div class="modal-row"><span class="k">H/V 比</span><span class="v">${ratio}</span></div>
+    <div class="modal-row"><span class="k">継続時間</span><span class="v">${e.duration} 秒</span></div>
+    <div class="modal-row"><span class="k">推定震度</span><span class="v" style="color:${info.color}">震度${e.shindo}</span></div>
+    <div class="modal-type" style="border-left-color:${cls.color}">
+      <div class="modal-type-label">揺れの種類（H/V 比による推定）</div>
+      <div class="modal-type-val" style="color:${cls.color}">${cls.label}</div>
+      <div class="modal-note" style="margin-top:6px">${cls.desc}</div>
+    </div>
+    <div class="modal-note">
+      <b>強さ:</b> ${intensityNote}<br>
+      <b>継続:</b> ${durNote}<br>
+      ※ 単一センサーでの推定です。震源・規模・発生メカニズム（プレート境界型／直下型など）の確定には複数観測点の解析が必要です。
+    </div>`;
+  document.getElementById('event-modal').classList.add('active');
+}
+function closeEventModal(){
+  document.getElementById('event-modal').classList.remove('active');
+}
+async function loadEventList(){
+  try{
+    const res=await fetch('/events');
+    const arr=await res.json();
+    _eventCache=arr;
+    const el=document.getElementById('event-list');
+    if(!arr.length){el.innerHTML='<div class="empty">記録なし</div>';return;}
+    const rows=arr.slice(0,50).map((e,i)=>{
+      const dt=new Date(e.start);
+      const ts=dt.toLocaleString('ja-JP',{month:'2-digit',day:'2-digit',
+                hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+      const info=SHINDO.find(s=>s.level===e.shindo)||{color:'#94a3b8'};
+      const cls=classifyHV(e.max_h, e.max_v);
+      return `<div class="event-item" onclick="openEventModal(${i})" title="クリックで詳細">
+        <div class="event-shindo" style="color:${info.color};border-color:${info.color}">震度${e.shindo}</div>
+        <div class="event-time">${ts}</div>
+        <div class="event-gal">${e.max_gal.toFixed(1)} gal</div>
+        <div class="event-dur">${e.duration}秒</div>
+        <div class="event-gal" style="color:${cls.color};font-size:11px">${cls.label.replace(/\s*\(.*?\)/,'')}</div>
+      </div>`;
+    });
+    el.innerHTML=rows.join('');
+  }catch(e){}
+}
+
+document.querySelectorAll('.iv-btn').forEach(btn=>{
+  btn.addEventListener('click',async()=>{
+    document.querySelectorAll('.iv-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    ivSec=Number(btn.dataset.iv);
+    _liveCarry=[];  // 未完了binを破棄
+    await loadHistory(win);
+  });
+});
+
+/* ── ドラッグで範囲選択（メインチャート上） ── */
+(function setupDragSelect(){
+  try{
+  const wrap = document.getElementById('cc-wrap');
+  const canvas = document.getElementById('cc');
+  const rect = document.getElementById('cc-selrect');
+  if(!wrap||!canvas||!rect){console.warn('drag select: elements missing');return;}
+  let dragging=false, startX=0, currentX=0;
+
+  function getRelX(e){
+    const r = canvas.getBoundingClientRect();
+    const cx = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+    return Math.max(0, Math.min(r.width, cx));
+  }
+  function pixelToTime(px){
+    const xs = charts.c.scales.x;
+    const area = charts.c.chartArea;
+    if(!xs || !area) return null;
+    const rel = (px - area.left) / (area.right - area.left);
+    return xs.min + rel * (xs.max - xs.min);
+  }
+  function onDown(e){
+    if(e.button!==undefined && e.button!==0) return;
+    dragging=true;
+    startX = currentX = getRelX(e);
+    rect.style.display='block';
+    rect.style.left = startX + 'px';
+    rect.style.width = '0px';
+    e.preventDefault();
+  }
+  function onMove(e){
+    if(!dragging) return;
+    currentX = getRelX(e);
+    const l = Math.min(startX,currentX), w = Math.abs(currentX-startX);
+    rect.style.left = l + 'px';
+    rect.style.width = w + 'px';
+  }
+  function onUp(e){
+    if(!dragging) return;
+    dragging=false;
+    rect.style.display='none';
+    const w = Math.abs(currentX-startX);
+    if(w < 8) return;  // 単なるクリックは無視
+    const xMin = pixelToTime(Math.min(startX,currentX));
+    const xMax = pixelToTime(Math.max(startX,currentX));
+    onCustomZoom(xMin, xMax);
+  }
+  wrap.addEventListener('mousedown', onDown);
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+  wrap.addEventListener('touchstart', onDown, {passive:false});
+  window.addEventListener('touchmove', onMove, {passive:false});
+  window.addEventListener('touchend', onUp);
+  // ドラッグ中のカーソル
+  wrap.style.cursor='crosshair';
+  }catch(e){console.error('setupDragSelect failed:',e);}
+})();
+
+/* ── 初期化 ── */
+(async()=>{
+  if(window.__dbg)__dbg('init start; Chart='+(typeof Chart));
+  try{ setYRange(25); }catch(e){if(window.__dbg)__dbg('setYRange ERR: '+e.message);}
+  try{ await loadHistory(win); if(window.__dbg)__dbg('loadHistory ok'); }catch(e){if(window.__dbg)__dbg('loadHistory ERR: '+e.message);}
+  try{ await loadEventList(); if(window.__dbg)__dbg('loadEventList ok'); }catch(e){if(window.__dbg)__dbg('loadEventList ERR: '+e.message);}
+  try{ attachLive(); }catch(e){if(window.__dbg)__dbg('attachLive ERR: '+e.message);}
+})();
+</script>
+</body>
+</html>
