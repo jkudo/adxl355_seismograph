@@ -32,7 +32,7 @@ def _post_tweet_async(shindo, max_gal, max_h, max_v, duration, start_ts):
             tstr = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_ts))
             text = (f"【地震検知】{tstr} 推定震度 {shindo} "
                     f"最大 {max_gal:.1f} gal (H {max_h:.1f} / V {max_v:.1f}) "
-                    f"継続 {duration:.1f}秒 #ADXL355地震計")
+                    f"継続 {duration:.1f}秒 #自宅震度計")
             payload = json.dumps({
                 "text": text,
                 "shindo": shindo,
