@@ -609,20 +609,25 @@ def producer_loop():
         pbin = int(now*10)
         ax_abs, ay_abs, az_abs = abs(ax), abs(ay), abs(az)
         c = math.hypot(h, v)
-        c_hist.append(c)
+        # ライブ波形は raw（LP前）の瞬時値も比較対象に入れて、震度4以上の高周ピークを取りこぼさない
+        h_raw_inst = math.hypot(raw_ax, raw_ay)
+        v_raw_inst = abs(raw_az)
+        c_raw_inst = math.hypot(h_raw_inst, v_raw_inst)
+        c_hist.append(c_raw_inst)
         if last_bin is None:
             last_bin = pbin
-            bin_peak_x, bin_abs_x = ax, ax_abs
-            bin_peak_y, bin_abs_y = ay, ay_abs
-            bin_peak_z, bin_abs_z = az, az_abs
-            bin_h_abs, bin_v_abs, bin_c_abs = h, v, c
+            bin_peak_x, bin_abs_x = raw_ax, abs(raw_ax)
+            bin_peak_y, bin_abs_y = raw_ay, abs(raw_ay)
+            bin_peak_z, bin_abs_z = raw_az, abs(raw_az)
+            bin_h_abs, bin_v_abs, bin_c_abs = h_raw_inst, v_raw_inst, c_raw_inst
         elif pbin == last_bin:
-            if ax_abs > bin_abs_x: bin_abs_x, bin_peak_x = ax_abs, ax
-            if ay_abs > bin_abs_y: bin_abs_y, bin_peak_y = ay_abs, ay
-            if az_abs > bin_abs_z: bin_abs_z, bin_peak_z = az_abs, az
-            if h > bin_h_abs: bin_h_abs = h
-            if v > bin_v_abs: bin_v_abs = v
-            if c > bin_c_abs: bin_c_abs = c
+            rax_abs, ray_abs, raz_abs = abs(raw_ax), abs(raw_ay), abs(raw_az)
+            if rax_abs > bin_abs_x: bin_abs_x, bin_peak_x = rax_abs, raw_ax
+            if ray_abs > bin_abs_y: bin_abs_y, bin_peak_y = ray_abs, raw_ay
+            if raz_abs > bin_abs_z: bin_abs_z, bin_peak_z = raz_abs, raw_az
+            if h_raw_inst > bin_h_abs: bin_h_abs = h_raw_inst
+            if v_raw_inst > bin_v_abs: bin_v_abs = v_raw_inst
+            if c_raw_inst > bin_c_abs: bin_c_abs = c_raw_inst
         else:
             # 計測震度簡易版: ソートして上から IVA_MIN_SAMPLES 番目の値が
             # 「|c|>a が累計 0.3秒以上となる最大 a」
@@ -639,10 +644,10 @@ def producer_loop():
                 "iva": round(iva, 2), "shindo": _iva_to_shindo(iva), "a_iva": round(a_iva, 3)
             }))
             last_bin = pbin
-            bin_peak_x, bin_abs_x = ax, ax_abs
-            bin_peak_y, bin_abs_y = ay, ay_abs
-            bin_peak_z, bin_abs_z = az, az_abs
-            bin_h_abs, bin_v_abs, bin_c_abs = h, v, c
+            bin_peak_x, bin_abs_x = raw_ax, abs(raw_ax)
+            bin_peak_y, bin_abs_y = raw_ay, abs(raw_ay)
+            bin_peak_z, bin_abs_z = raw_az, abs(raw_az)
+            bin_h_abs, bin_v_abs, bin_c_abs = h_raw_inst, v_raw_inst, c_raw_inst
 
         # ---- 1秒ごとにDB保存 ----
         if cur_sec is None: cur_sec = now_s
