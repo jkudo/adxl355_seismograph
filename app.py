@@ -574,15 +574,19 @@ def producer_loop():
         lta_buf.append(c_sta); lta_sum += c_sta
         if len(lta_buf) == LTA_LEN and lta_sum > 0.0:
             ratio = (sta_sum / STA_LEN) / (lta_sum / LTA_LEN)
+            # ピーク値追跡用: LP前の生加速度（瞬時値）。震度算出は本来高周波も含むため。
+            c_raw = math.hypot(math.hypot(raw_ax, raw_ay), abs(raw_az))
+            h_raw = math.hypot(raw_ax, raw_ay)
+            v_raw = abs(raw_az)
             if not quake_on and ratio >= STALTA_ON:
-                quake_on = True; quake_start_t = now; quake_max_gal = c_sta
-                quake_max_h = h; quake_max_v = v
+                quake_on = True; quake_start_t = now; quake_max_gal = c_raw
+                quake_max_h = h_raw; quake_max_v = v_raw
                 print(f"[地震検知] STA/LTA={ratio:.2f}")
                 ui_broadcast(json.dumps({"type":"quake_start","t":now,"ratio":round(ratio,2)}))
             elif quake_on:
-                if c_sta > quake_max_gal: quake_max_gal = c_sta
-                if h > quake_max_h: quake_max_h = h
-                if v > quake_max_v: quake_max_v = v
+                if c_raw > quake_max_gal: quake_max_gal = c_raw
+                if h_raw > quake_max_h: quake_max_h = h_raw
+                if v_raw > quake_max_v: quake_max_v = v_raw
                 if ratio < STALTA_OFF:
                     dur = now - quake_start_t
                     if dur >= QUAKE_MIN_DUR:
