@@ -167,6 +167,18 @@ def read_xyz_gal():
     z = _read_axis_raw(REG_ZDATA3) * SCALE_GAL
     return x, y, z
 
+def read_adxl_temp_c():
+    """ADXL355内蔵温度センサ (°C)。データシート式:
+       T = (1852 - TEMP_raw) / 9.05 + 19.21
+    レジスタ 0x06(上位4bit) / 0x07(下位8bit)。"""
+    try:
+        hi = _spi_read_reg(0x06) & 0x0F
+        lo = _spi_read_reg(0x07)
+        raw = (hi << 8) | lo
+        return (1852.0 - raw) / 9.05 + 19.21
+    except Exception:
+        return float('nan')
+
 def _spi_write_verify(reg, value, expected=None, retries=5, delay=0.01):
     """書込→読戻しでベリファイし、失敗時はリトライ。expected省略時はvalueと一致チェック。"""
     if expected is None:
@@ -461,15 +473,43 @@ def producer_loop():
     quake_max_h = 0.0; quake_max_v = 0.0
     quake_c_hist = []  # 地震中の c_raw 全サンプル（Iva計算用）
 
-    # 自動再キャリブレーション: 300秒EMAで持続的オフセットを検出
-    # EMA時定数を長くすることで長い地震（1〜2分）との誤判定を防ぐ
-    # calibrate()内のstddevチェックが揺れ継続中の実行を防ぐ二重安全
-    RECAL_TAU       = 300.0  # EMA時定数（秒）= 5分。長い地震でも誤作動しにくい
-    RECAL_THRESHOLD = 5.0    # gal: 持続平均がこれを超えたら再キャリブレーション
-    RECAL_COOLDOWN  = 600.0  # 秒: 再キャリブレーション後10分クールダウン
-    ema_alpha = dt / RECAL_TAU
+    # ==== 自動再キャリブレーション（Phase A: offset + noise floor + 静止 gate） ====
+    # 二系統の異常検出:
+    #   (A) offset 異常 : lp_* の長期EMAがOFFSET_THR以上ずれる（温度ドリフトのDC側）
+    #   (B) noise  異常 : 高域残差 c_hp の短窓RMSが静止時基準 rms_base の数倍に上昇
+    # 静止判定 gate（peak/rms/quake_on/連続秒）がONの間だけ判定と基準更新を行う。
+    # 状態機械: INIT → MONITOR → SUSPECT → RECAL → COOLDOWN → MONITOR
+    RECAL_TAU            = 300.0  # offset EMA 時定数 (s)
+    RECAL_RMS_BASE_TAU   = 600.0  # rms_base EMA 時定数 (s)
+    RECAL_COOLDOWN       = 600.0  # 再キャリブ後の抑止 (s)
+    OFFSET_THR           = 5.0    # gal
+    OFFSET_DUR           = 30.0   # s
+    NOISE_RATIO_L2       = 3.0    # rms_short / rms_base
+    NOISE_RATIO_L3       = 5.0
+    NOISE_FLOOR_MIN      = 1.5    # gal: ノイズの絶対下限（小さなratioを無視）
+    NOISE_DUR            = 60.0   # s
+    QUIET_PEAK           = 3.0    # gal: 静止判定の peak 上限
+    QUIET_RMS_FACTOR     = 1.8    # 静止判定の rms 倍率上限
+    QUIET_MIN_SEC        = 10.0   # 静止が連続して必要な秒数
+    RMS_SHORT_LEN        = 125    # 1秒 @ 125Hz
+    LOG_INTERVAL_SEC     = 10.0
+
+    ema_alpha    = dt / RECAL_TAU
+    rms_b_alpha  = dt / RECAL_RMS_BASE_TAU
     ema_x = ema_y = ema_z = 0.0
-    recal_cooldown_rem = RECAL_TAU  # 起動直後はEMAが収束するまで待つ
+    hp_buf = collections.deque(maxlen=RMS_SHORT_LEN)
+    rms_short = 0.0
+    rms_base = None
+    quiet_dur = 0.0
+    recal_state = "INIT"            # INIT|MONITOR|SUSPECT|COOLDOWN（RECALは瞬時）
+    suspect_kind = None              # "offset" | "noise" | None
+    suspect_since = 0.0
+    suspect_level = 0                # noise の場合の重大度 (0..3)
+    recal_cooldown_rem = RECAL_TAU   # 起動直後はEMA/rms_base 収束まで待機
+    last_log_t = 0.0
+    last_temp_t = 0.0
+    temp_c_cur = float('nan')
+    temp_c_at_cal = float('nan')
 
     cur_sec = None
     s_cnt = 0
@@ -519,13 +559,105 @@ def producer_loop():
         ay = sum(_filt_y) / FILTER_LEN
         az = sum(_filt_z) / FILTER_LEN
 
-        # ---- 自動再キャリブレーション判定 ----
+        # ---- 自動再キャリブレーション判定（Phase A 状態機械） ----
+        now_ts = time.time()
+
+        # オフセット EMA（常時更新）
         ema_x = ema_alpha * ax + (1 - ema_alpha) * ema_x
         ema_y = ema_alpha * ay + (1 - ema_alpha) * ema_y
         ema_z = ema_alpha * az + (1 - ema_alpha) * ema_z
+
+        # 高域残差 RMS（短窓 1s）
+        _hx = raw_ax - lp_ax; _hy = raw_ay - lp_ay; _hz = raw_az - lp_az
+        c_hp = math.sqrt(_hx*_hx + _hy*_hy + _hz*_hz)
+        hp_buf.append(c_hp)
+        _n = len(hp_buf)
+        if _n > 0:
+            _sq = 0.0
+            _peak = 0.0
+            for _v in hp_buf:
+                _sq += _v * _v
+                if _v > _peak: _peak = _v
+            rms_short = math.sqrt(_sq / _n)
+            peak_short = _peak
+        else:
+            rms_short = 0.0; peak_short = 0.0
+
+        # 静止判定
+        _rms_gate = max(2.5, (rms_base if rms_base is not None else 1.0) * QUIET_RMS_FACTOR)
+        quiet_now = (not quake_on
+                     and peak_short < QUIET_PEAK
+                     and rms_short < _rms_gate)
+        quiet_dur = (quiet_dur + dt) if quiet_now else 0.0
+        is_quiet = quiet_dur >= QUIET_MIN_SEC
+
+        # rms_base は静止時のみ更新
+        if is_quiet:
+            if rms_base is None:
+                rms_base = rms_short
+            else:
+                rms_base += rms_b_alpha * (rms_short - rms_base)
+
+        # 温度は 1Hz
+        if now_ts - last_temp_t >= 1.0:
+            temp_c_cur = read_adxl_temp_c()
+            last_temp_t = now_ts
+            if math.isnan(temp_c_at_cal) and not math.isnan(temp_c_cur):
+                temp_c_at_cal = temp_c_cur
+
+        # Cooldown 進行
         recal_cooldown_rem = max(0.0, recal_cooldown_rem - dt)
-        if recal_cooldown_rem == 0.0 and (abs(ema_x) > RECAL_THRESHOLD or abs(ema_y) > RECAL_THRESHOLD):
-            print(f"オフセットドリフト検出（EMA x={ema_x:.1f} y={ema_y:.1f} gal）。自動再キャリブレーション開始...")
+        if recal_cooldown_rem > 0.0:
+            if recal_state != "INIT":
+                recal_state = "COOLDOWN"
+        else:
+            if recal_state in ("INIT", "COOLDOWN"):
+                recal_state = "MONITOR"
+
+        # 異常判定（cooldown 明け & 静止時のみ）
+        do_recal = False
+        do_recal_reason = ""
+        if recal_cooldown_rem == 0.0 and is_quiet:
+            offset_bad = (abs(ema_x) > OFFSET_THR or
+                          abs(ema_y) > OFFSET_THR or
+                          abs(ema_z) > OFFSET_THR)
+            _base = rms_base if rms_base is not None else 0.5
+            ratio = rms_short / max(_base, 0.5)
+            if rms_short > 3.0 or ratio > NOISE_RATIO_L3:
+                noise_lv = 3
+            elif ratio > NOISE_RATIO_L2 and rms_short > NOISE_FLOOR_MIN:
+                noise_lv = 2
+            elif ratio > 2.0:
+                noise_lv = 1
+            else:
+                noise_lv = 0
+
+            kind = "offset" if offset_bad else ("noise" if noise_lv >= 2 else None)
+            if kind is None:
+                if recal_state == "SUSPECT":
+                    recal_state = "MONITOR"
+                    suspect_kind = None
+            else:
+                if recal_state != "SUSPECT" or suspect_kind != kind:
+                    recal_state = "SUSPECT"
+                    suspect_kind = kind
+                    suspect_since = now_ts
+                    suspect_level = noise_lv
+                else:
+                    dur_need = OFFSET_DUR if kind == "offset" else NOISE_DUR
+                    if (now_ts - suspect_since) >= dur_need:
+                        do_recal = True
+                        do_recal_reason = (
+                            f"{kind} L{suspect_level} rms_s={rms_short:.2f} "
+                            f"rms_b={(rms_base or 0):.2f} "
+                            f"ema=({ema_x:.1f},{ema_y:.1f},{ema_z:.1f}) "
+                            f"temp={temp_c_cur:.1f} dT={(temp_c_cur-temp_c_at_cal) if not math.isnan(temp_c_at_cal) else float('nan'):+.1f}"
+                        )
+
+        # 再キャリブ実行
+        if do_recal:
+            print(f"[recal] RECAL trigger: {do_recal_reason}")
+            recal_state = "RECAL"
             ax0, ay0, az0 = calibrate()
             lp_x.reset(); lp_y.reset(); lp_z.reset()
             for buf in (_filt_x, _filt_y, _filt_z):
@@ -535,8 +667,24 @@ def producer_loop():
             quake_on = False; quake_start_t = 0.0; quake_max_gal = 0.0
             quake_max_h = 0.0; quake_max_v = 0.0
             ema_x = ema_y = ema_z = 0.0
+            hp_buf.clear(); rms_base = None
+            quiet_dur = 0.0
+            suspect_kind = None; suspect_since = 0.0; suspect_level = 0
             recal_cooldown_rem = RECAL_COOLDOWN
-            print("自動再キャリブレーション完了。")
+            temp_c_at_cal = temp_c_cur
+            recal_state = "COOLDOWN"
+            print("[recal] RECAL done -> COOLDOWN 600s")
+
+        # 状態ログ（10秒周期）
+        if now_ts - last_log_t >= LOG_INTERVAL_SEC:
+            last_log_t = now_ts
+            _suspect_str = (f" suspect={suspect_kind}/{(now_ts - suspect_since):.0f}s"
+                            if recal_state == "SUSPECT" else "")
+            print(f"[recal] state={recal_state} quiet={quiet_dur:.0f}s "
+                  f"rms_s={rms_short:.2f} rms_b={(rms_base if rms_base is not None else -1):.2f} "
+                  f"ema=({ema_x:+.2f},{ema_y:+.2f},{ema_z:+.2f}) "
+                  f"cd={recal_cooldown_rem:.0f}s temp={temp_c_cur:.1f}"
+                  f"{_suspect_str}")
 
         # ---- 手動再キャリブレーション要求 ----
         if recal_request.is_set():
@@ -554,7 +702,12 @@ def producer_loop():
                 quake_on = False; quake_start_t = 0.0; quake_max_gal = 0.0
                 quake_max_h = 0.0; quake_max_v = 0.0
                 ema_x = ema_y = ema_z = 0.0
+                hp_buf.clear(); rms_base = None
+                quiet_dur = 0.0
+                suspect_kind = None; suspect_since = 0.0; suspect_level = 0
                 recal_cooldown_rem = RECAL_COOLDOWN
+                temp_c_at_cal = temp_c_cur
+                recal_state = "COOLDOWN"
                 recal_status["state"] = "done"; recal_status["ts"] = time.time()
                 print("手動再キャリブレーション完了。")
                 ui_broadcast(json.dumps({"type":"recal_done","t":time.time()}))
