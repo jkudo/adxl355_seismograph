@@ -471,7 +471,8 @@ def producer_loop():
     sta_sum = lta_sum = 0.0
     quake_on = False; quake_start_t = 0.0; quake_max_gal = 0.0
     quake_max_h = 0.0; quake_max_v = 0.0
-    quake_c_hist = []  # 地震中の c_raw 全サンプル（Iva計算用）
+    quake_c_hist = []  # 地震中の c_raw 全サンプル（最大ピーク表示用）
+    quake_hp_hist = []  # 地震中の c_hp 全サンプル（Iva計算用、HP残差ベース）
 
     # ==== 自動再キャリブレーション（Phase A: offset + noise floor + 静止 gate） ====
     # 二系統の異常検出:
@@ -736,6 +737,7 @@ def producer_loop():
                 quake_on = True; quake_start_t = now; quake_max_gal = c_raw
                 quake_max_h = h_raw; quake_max_v = v_raw
                 quake_c_hist = [c_raw]
+                quake_hp_hist = [c_hp]
                 print(f"[地震検知] STA/LTA={ratio:.2f}")
                 ui_broadcast(json.dumps({"type":"quake_start","t":now,"ratio":round(ratio,2)}))
             elif quake_on:
@@ -743,15 +745,19 @@ def producer_loop():
                 if h_raw > quake_max_h: quake_max_h = h_raw
                 if v_raw > quake_max_v: quake_max_v = v_raw
                 quake_c_hist.append(c_raw)
+                quake_hp_hist.append(c_hp)
                 if ratio < STALTA_OFF:
                     dur = now - quake_start_t
                     if dur >= QUAKE_MIN_DUR:
-                        # JMA計測震度 Iva簡易版: 地震中の c_raw をソートし、
-                        # 上から 0.3秒分サンプル目の値（= 0.3秒以上継続した最大加速度）
-                        sorted_c = sorted(quake_c_hist, reverse=True)
-                        idx = min(IVA_MIN_SAMPLES - 1, len(sorted_c) - 1)
-                        a_iva_q = sorted_c[idx] if sorted_c else 0.0
-                        iva_q = (2.0 * math.log10(a_iva_q) + 0.94) if a_iva_q > 0.0 else -1.0
+                        # JMA計測震度 Iva簡易版: HP残差 c_hp をソートし、上から 0.3秒分目の値
+                        sorted_hp = sorted(quake_hp_hist, reverse=True)
+                        idx = min(IVA_MIN_SAMPLES - 1, len(sorted_hp) - 1)
+                        a_iva_q = sorted_hp[idx] if sorted_hp else 0.0
+                        _dead_q = max(0.4, (rms_base or 0.0) * 1.5)
+                        if a_iva_q < _dead_q:
+                            iva_q = -1.0
+                        else:
+                            iva_q = 2.0 * math.log10(a_iva_q) + 0.94
                         sh = _iva_to_shindo(iva_q)
                         _save_event(cur, conn, int(quake_start_t), int(now), quake_max_gal, sh, dur,
                                     max_h=quake_max_h, max_v=quake_max_v)
@@ -770,6 +776,7 @@ def producer_loop():
                     quake_on=False; quake_start_t=0.0; quake_max_gal=0.0
                     quake_max_h=0.0; quake_max_v=0.0
                     quake_c_hist = []
+                    quake_hp_hist = []
 
         # ---- 10Hzピーク更新 ----
         pbin = int(now*10)
@@ -779,7 +786,8 @@ def producer_loop():
         h_raw_inst = math.hypot(raw_ax, raw_ay)
         v_raw_inst = abs(raw_az)
         c_raw_inst = math.hypot(h_raw_inst, v_raw_inst)
-        c_hist.append(c_raw_inst)
+        # Iva は HP 残差 c_hp ベース。DC ドリフト＆ノイズフロアの影響を排除し JMA 仕様に近づける
+        c_hist.append(c_hp)
         if last_bin is None:
             last_bin = pbin
             bin_peak_x, bin_abs_x = raw_ax, abs(raw_ax)
@@ -796,13 +804,18 @@ def producer_loop():
             if c_raw_inst > bin_c_abs: bin_c_abs = c_raw_inst
         else:
             # 計測震度簡易版: ソートして上から IVA_MIN_SAMPLES 番目の値が
-            # 「|c|>a が累計 0.3秒以上となる最大 a」
+            # 「|c_hp|>a が累計 0.3秒以上となる最大 a」
             if len(c_hist) >= IVA_MIN_SAMPLES:
                 sorted_c = sorted(c_hist, reverse=True)
                 a_iva = sorted_c[IVA_MIN_SAMPLES - 1]
             else:
                 a_iva = 0.0
-            iva = (2.0 * math.log10(a_iva) + 0.94) if a_iva > 0.0 else -1.0
+            # ノイズフロアデッドバンド: rms_base × 1.5（最低 0.4 gal）以下は無震動扱い
+            _dead = max(0.4, (rms_base or 0.0) * 1.5)
+            if a_iva < _dead:
+                iva = -1.0
+            else:
+                iva = 2.0 * math.log10(a_iva) + 0.94
             ui_broadcast(json.dumps({
                 "t": last_bin/10.0,
                 "ax": bin_peak_x, "ay": bin_peak_y, "az": bin_peak_z,
