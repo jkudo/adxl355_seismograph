@@ -780,6 +780,17 @@ function showBannerEnd(d){
   _bannerTimer=setTimeout(()=>{
     b.classList.remove('active');_bannerTimer=null;
   },30000);
+  // 震度4以上はY軸を自動スケール（最大gal値を包含する最小ステップに切り上げ）
+  const lvl=parseInt(String(sh)[0],10)||0;
+  if(lvl>=4 && d.max_gal){
+    const steps=[25,100,200,400,800];
+    const r=steps.find(s=>s>=d.max_gal*1.2)||Math.ceil(d.max_gal*1.2/100)*100;
+    setYRange(r);
+    document.querySelectorAll('button[data-range]').forEach(b2=>{
+      b2.classList.toggle('active', Number(b2.dataset.range)===r);
+    });
+    Object.values(charts).forEach(c=>c.update('none'));
+  }
   loadEventList();
 }
 function closeBanner(){
@@ -858,7 +869,7 @@ async function loadEventList(){
     _eventCache=arr;
     const el=document.getElementById('event-list');
     if(!arr.length){el.innerHTML='<div class="empty">記録なし</div>';return;}
-    const rows=arr.slice(0,50).map((e,i)=>{
+    const rows=arr.slice(0,10).map((e,i)=>{
       const dt=new Date(e.start);
       const ts=dt.toLocaleString('ja-JP',{month:'2-digit',day:'2-digit',
                 hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
