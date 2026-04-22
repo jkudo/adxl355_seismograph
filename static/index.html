@@ -317,6 +317,10 @@
         <button class="modal-close" onclick="closeEventModal()">✕</button>
       </div>
       <div id="m-body"></div>
+      <div style="margin-top:14px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">合成加速度の波形（記録時）</div>
+        <div style="position:relative;height:180px"><canvas id="m-chart"></canvas></div>
+      </div>
     </div>
   </div>
 
@@ -877,22 +881,43 @@ function openEventModal(idx){
       ※ 単一センサーでの推定です。震源・規模・発生メカニズム（プレート境界型／直下型など）の確定には複数観測点の解析が必要です。
     </div>`;
   document.getElementById('event-modal').classList.add('active');
-  // 過去地震を表示中はその最大galに合わせてY軸を拡大（震度4以上 or 25galを超える場合）
-  if(e.max_gal){
-    const steps=[25,100,200,400,800,1600];
-    const r=steps.find(s=>s>=e.max_gal*1.2)||Math.ceil(e.max_gal*1.2/100)*100;
-    const curMax=charts.c.options.scales.y.max||25;
-    if(r>curMax){
-      setYRange(r);
-      document.querySelectorAll('button[data-range]').forEach(b2=>{
-        b2.classList.toggle('active', Number(b2.dataset.range)===r);
-      });
-      Object.values(charts).forEach(c=>c.update('none'));
+  loadEventWaveform(e);
+}
+
+let _modalChart=null;
+async function loadEventWaveform(e){
+  const cv=document.getElementById('m-chart'); if(!cv) return;
+  if(_modalChart){ _modalChart.destroy(); _modalChart=null; }
+  // 前後 5 秒を含めて取得
+  const start=e.start-5000, end=e.end+5000;
+  let pts=[];
+  try{
+    const res=await fetch(`/history?start=${start}&end=${end}&interval=0`);
+    pts=await res.json();
+  }catch(err){ return; }
+  if(!Array.isArray(pts)||!pts.length) return;
+  const data=pts.map(p=>({x:p.t,y:p.c}));
+  // Y軸最大: 当該イベントmax_galに合わせて段階的に
+  const steps=[25,100,200,400,800,1600];
+  const r=steps.find(s=>s>=(e.max_gal||0)*1.2)||Math.ceil((e.max_gal||25)*1.2/100)*100;
+  _modalChart=new Chart(cv.getContext('2d'),{
+    type:'line',
+    data:{datasets:[{data,borderColor:'#fbbf24',backgroundColor:'rgba(251,191,36,0.15)',
+      borderWidth:1.2,pointRadius:0,fill:true,tension:0.15}]},
+    options:{animation:false,responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{enabled:false}},
+      scales:{
+        x:{type:'time',time:{unit:'second',displayFormats:{second:'HH:mm:ss'}},
+           ticks:{color:'#94a3b8',font:{size:10}},grid:{color:'rgba(148,163,184,0.1)'}},
+        y:{min:0,max:r,ticks:{color:'#94a3b8',font:{size:10}},
+           grid:{color:'rgba(148,163,184,0.1)'},title:{display:true,text:'gal',color:'#94a3b8',font:{size:10}}}
+      }
     }
-  }
+  });
 }
 function closeEventModal(){
   document.getElementById('event-modal').classList.remove('active');
+  if(_modalChart){ _modalChart.destroy(); _modalChart=null; }
 }
 async function loadEventList(){
   try{
