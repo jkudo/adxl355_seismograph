@@ -8,7 +8,51 @@ ADXL355 Web Monitor
 """
 
 import time, threading, json, sqlite3, queue, os, math, collections, atexit
+import urllib.request, urllib.error
 from flask import Flask, Response, send_from_directory, request, jsonify
+
+# ==== 震度3以上で Webhook (Tweet) ====
+# URL は秘匿。systemd の Environment= か環境変数 TWEET_WEBHOOK_URL で注入する。
+TWEET_WEBHOOK_URL = os.environ.get("TWEET_WEBHOOK_URL", "").strip()
+TWEET_MIN_LEVEL = int(os.environ.get("TWEET_MIN_LEVEL", "3"))
+
+def _shindo_to_level(sh):
+    """震度文字列 → 整数レベル（5弱→5, 5強→5, ... 不明→0）"""
+    if not sh: return 0
+    try:
+        return int(sh[0])
+    except (ValueError, IndexError):
+        return 0
+
+def _post_tweet_async(shindo, max_gal, max_h, max_v, duration, start_ts):
+    if not TWEET_WEBHOOK_URL:
+        return
+    def _do():
+        try:
+            tstr = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_ts))
+            text = (f"【地震検知】{tstr} 推定震度 {shindo} "
+                    f"最大 {max_gal:.1f} gal (H {max_h:.1f} / V {max_v:.1f}) "
+                    f"継続 {duration:.1f}秒 #ADXL355地震計")
+            payload = json.dumps({
+                "text": text,
+                "shindo": shindo,
+                "max_gal": round(max_gal, 1),
+                "max_h": round(max_h, 1),
+                "max_v": round(max_v, 1),
+                "duration_sec": round(duration, 1),
+                "start_ts": int(start_ts),
+                "time": tstr,
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                TWEET_WEBHOOK_URL, data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=10) as r:
+                print(f"[tweet webhook] {r.status} shindo={shindo}")
+        except Exception as e:
+            print(f"[tweet webhook ERROR] {e}")
+    threading.Thread(target=_do, daemon=True).start()
 
 class BiquadLP:
     """2次バターワース ローパスフィルタ（fc=5Hz, fs=125Hz）
@@ -549,6 +593,9 @@ def producer_loop():
                         ui_broadcast(json.dumps({"type":"quake_end","t":now,
                             "max_gal":round(quake_max_gal,1),"shindo":sh,"duration":round(dur,1),
                             "max_h":round(quake_max_h,1),"max_v":round(quake_max_v,1)}))
+                        if _shindo_to_level(sh) >= TWEET_MIN_LEVEL:
+                            _post_tweet_async(sh, quake_max_gal, quake_max_h, quake_max_v,
+                                              dur, quake_start_t)
                     else:
                         print(f"[誤検知破棄] {dur:.1f}秒（最小{QUAKE_MIN_DUR}秒未満）")
                     quake_on=False; quake_start_t=0.0; quake_max_gal=0.0
