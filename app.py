@@ -797,8 +797,28 @@ def recal_status_api():
 
 # ==== Gunicorn でも起動時にスレッドを一度だけ立ち上げる ====
 db_init()
+
+def daily_recal_scheduler():
+    """毎日 DAILY_RECAL_HOUR 時に再キャリブレーション要求を発火する。
+    揺れ検知中は producer_loop 側がキューを処理するタイミングで安全に実行される。
+    """
+    hour = int(os.environ.get("DAILY_RECAL_HOUR", "4"))   # 既定 4:00 (静かな時間)
+    minute = int(os.environ.get("DAILY_RECAL_MINUTE", "0"))
+    while True:
+        now = time.time()
+        lt = time.localtime(now)
+        target = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday,
+                              hour, minute, 0, 0, 0, lt.tm_isdst))
+        if target <= now:
+            target += 86400
+        sleep_sec = target - now
+        time.sleep(sleep_sec)
+        print(f"[daily recal] {time.strftime('%Y-%m-%d %H:%M:%S')} 定期再キャリブレーション要求")
+        recal_request.set()
+
 if not getattr(app, "_thread_started", False):
     threading.Thread(target=producer_loop, daemon=True).start()
+    threading.Thread(target=daily_recal_scheduler, daemon=True).start()
     app._thread_started = True
 
 # ==== 開発用（python3 app.py で直起動）====
